@@ -71,6 +71,9 @@ path = "src/agentguard/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentguard"]
 
+# An sdist is immutable once it is on PyPI, so everything a downstream packager,
+# a distro, or a reader of the source archive might reasonably want is included
+# here -- the policies as much as the code.
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
@@ -82,6 +85,10 @@ include = [
     "/README.zh-CN.md",
     "/LICENSE",
     "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
+    "/CODE_OF_CONDUCT.md",
+    "/ROADMAP.md",
 ]
 
 [tool.pytest.ini_options]
