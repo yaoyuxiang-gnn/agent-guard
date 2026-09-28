@@ -194,7 +194,10 @@ def main() -> None:
     lines = capture()
     svg = render(lines)
     TARGET.parent.mkdir(parents=True, exist_ok=True)
-    TARGET.write_text(svg, encoding="utf-8")
+    # newline="\n" keeps the generated file byte-identical on Windows and Linux.
+    # Without it, Windows writes CRLF and every regeneration shows up as a diff
+    # until .gitattributes normalises it back.
+    TARGET.write_text(svg, encoding="utf-8", newline="\n")
     print(
         f"wrote {TARGET.relative_to(ROOT)} "
         f"({len(lines)} lines, {len(svg):,} bytes, "

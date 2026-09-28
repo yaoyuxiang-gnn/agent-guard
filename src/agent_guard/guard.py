@@ -662,7 +662,9 @@ class Guard:
             $ agent-guard report run.json
         """
         target = Path(path)
-        target.write_text(self.to_json(indent=indent), encoding="utf-8")
+        # newline="\n" so a report written on Windows is byte-identical to one
+        # written on Linux, and CI diffs stay meaningful.
+        target.write_text(self.to_json(indent=indent), encoding="utf-8", newline="\n")
         return target
 
     def __repr__(self) -> str:
