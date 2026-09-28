@@ -57,8 +57,8 @@ please upgrade to the newest release before reporting.
 
 | Version | Supported |
 |---|---|
-| 0.1.x | Yes |
-| < 0.1 | No |
+| 0.2.x | Yes |
+| < 0.2 | No |
 
 ## Reporting
 
