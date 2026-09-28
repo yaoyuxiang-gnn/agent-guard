@@ -525,19 +525,38 @@ def _report_write(target: Path, description: str, *, name: str, price: Price) ->
         print(f"note: {note}", file=sys.stderr)
 
 
+def _same_file(left: str | Path, right: str | Path) -> bool:
+    """Whether two strings name the same file.
+
+    The same config file can be spelled more than one way: ``--file`` may be
+    relative, and a working directory reached through a symlink (which is how macOS
+    reaches its temporary directory) resolves to a different string than the one
+    discovery walked up from. Comparing the raw strings reports a file as "not in
+    effect" while it is the very file being written.
+    """
+    return Path(left).resolve() == Path(right).resolve()
+
+
 def _shadow_note(name: str, price: Price, target: Path) -> str | None:
     """Explain when a freshly written entry is not what Guard will actually use."""
     ignored = ignored_project_config()
-    if ignored is not None and target == ignored:
+    if ignored is not None and _same_file(target, ignored):
         return (
             f"this is a project config and it is not trusted, so it is not read yet; "
             f"set {CONFIG_TRUST_ENV_VAR}=1 to use it"
         )
     try:
-        effective = load_config()
+        with warnings.catch_warnings():
+            # The library warns when it skips an untrusted project file. This
+            # command says so itself, in its own words, so the warning is dropped
+            # rather than printed with a source line above the note.
+            warnings.filterwarnings(
+                "ignore", message=_IGNORED_CONFIG_WARNING, category=RuntimeWarning
+            )
+            effective = load_config()
     except GuardConfigError as exc:
         return f"the effective config does not load, so Guard() will fail: {exc}"
-    if target not in effective.sources:
+    if not any(_same_file(target, source) for source in effective.sources):
         others = ", ".join(str(source) for source in effective.sources) or "no config file"
         return (
             f"{target} is not in effect ({others}); set {CONFIG_ENV_VAR} or edit that file instead"

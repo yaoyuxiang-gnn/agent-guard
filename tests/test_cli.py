@@ -303,6 +303,18 @@ class ProjectConfigTrustCliTests(unittest.TestCase):
             json.dumps({"version": 1, "models": {"from-project": [1.0, 2.0]}}), encoding="utf-8"
         )
 
+    def assert_same_file(self, reported: object, expected: Path) -> None:
+        """Assert the CLI named *this* file, whatever way it spelled it.
+
+        macOS reaches its temporary directory through ``/var``, a symlink to
+        ``/private/var``, so ``os.getcwd()`` — what discovery walks up from — hands
+        back a different string than ``tempfile`` gave the test. Comparing raw
+        strings made these tests pass on Linux and Windows and fail on every macOS
+        Python, which is exactly what the CI badge showed.
+        """
+        self.assertIsNotNone(reported)
+        self.assertEqual(Path(str(reported)).resolve(), expected.resolve())
+
     def test_path_marks_the_project_file_as_ignored(self) -> None:
         code, out, _ = run_cli("config", "path")
         self.assertEqual(code, 0)
@@ -315,7 +327,7 @@ class ProjectConfigTrustCliTests(unittest.TestCase):
         payload = json.loads(out)
         self.assertNotIn("from-project", {row["model"] for row in payload["models"]})
         self.assertEqual(payload["config_files"], [])
-        self.assertEqual(payload["ignored_config"], str(self.project))
+        self.assert_same_file(payload["ignored_config"], self.project)
 
     def test_pricing_prints_a_note_instead_of_a_warning(self) -> None:
         code, out, err = run_cli("pricing")
@@ -334,6 +346,17 @@ class ProjectConfigTrustCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("not trusted", err)
         self.assertIn(CONFIG_TRUST_ENV_VAR, err)
+        self.assertNotIn("RuntimeWarning", err)
+
+    def test_a_relative_file_target_is_not_called_missing(self) -> None:
+        # `--file agentguard.json` writes the project config, so the note has to be
+        # the trust one. Comparing the relative path against the absolute path
+        # discovery reports made this say "not in effect (no config file)".
+        code, out, err = run_cli("config", "set", "--file", "agentguard.json", "my-ft", "3", "12")
+        self.assertEqual(code, 0)
+        self.assertIn("agentguard.json", out)
+        self.assertIn("not trusted", err)
+        self.assertNotIn("not in effect", err)
 
     def test_trusting_it_makes_it_effective(self) -> None:
         with mock.patch.dict(os.environ, {CONFIG_TRUST_ENV_VAR: "1"}):
@@ -342,7 +365,9 @@ class ProjectConfigTrustCliTests(unittest.TestCase):
             payload = json.loads(out)
             models = {row["model"]: row for row in payload["models"]}
             self.assertEqual(models["from-project"]["source"], "config")
-            self.assertEqual(payload["config_files"], [str(self.project)])
+            reported = list(payload["config_files"])
+            self.assertEqual(len(reported), 1)
+            self.assert_same_file(reported[0], self.project)
 
 
 class ConfiguredPricingTests(unittest.TestCase):
