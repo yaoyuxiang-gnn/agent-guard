@@ -10,9 +10,13 @@ from . import GuardedClient, resolve_guard
 __all__ = ["guard_anthropic"]
 
 
-#: ``messages.create`` is the workhorse. ``stream`` is deliberately excluded: a
-#: stream carries no usage until it is drained, and agent-guard will not guess.
+#: ``messages.create`` is the workhorse; ``create(stream=True)`` is detected
+#: from the call arguments and wrapped in a GuardedStream.
 _RECORD_ON = ("create",)
+
+#: ``messages.stream(...)`` returns a context manager whose events carry usage
+#: on message_start/message_delta, so it is always a stream.
+_STREAM_ON = ("stream",)
 
 
 def guard_anthropic(
@@ -35,14 +39,23 @@ def guard_anthropic(
         client = guard_anthropic(Anthropic(), max_usd=2.0, max_steps=40)
         message = client.messages.create(...)   # recorded, no extra code
 
-    For streaming, collect usage from the final ``message_delta`` event and call
-    ``guard.record(...)`` yourself once the stream is drained.
+    Streaming is recorded too, on both shapes::
+
+        # raw event stream
+        for event in client.messages.create(..., stream=True):
+            ...     # recorded once, when the stream is drained
+
+        # manager-style helper
+        with client.messages.stream(...) as stream:
+            for event in stream:
+                ... # recorded once, when the block exits
     """
     resolved = resolve_guard(guard, dict(guard_kwargs), adapter="guard_anthropic")
     return GuardedClient(
         client,
         resolved,
         record_on=_RECORD_ON,
+        stream_on=_STREAM_ON,
         preflight=preflight,
         chars_per_token=chars_per_token,
     )

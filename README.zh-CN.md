@@ -257,6 +257,30 @@ from agentguard.adapters.anthropic import guard_anthropic
 client = guard_anthropic(Anthropic(), max_usd=2.0)
 ```
 
+**流式开箱即用。** 传 `stream=True` 后，返回值会被包装成 `GuardedStream`：chunk 原样透传，在流被消费完时只记录一次 usage（提前中断则记录已看到的部分）。Anthropic 的 `messages.stream()` 上下文管理器和异步客户端（`async for`）同样支持：
+
+```python
+stream = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[...],
+    stream=True,
+    stream_options={"include_usage": True},   # 让最后一个 chunk 带上 usage
+)
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
+# 在这里完成记录，恰好一次
+```
+
+**LangGraph** 的 agent 只需要一个回调处理器——LLM 调用自动计价，工具调用进入死循环检测：
+
+```python
+from agentguard import Guard
+from agentguard.integrations.langgraph import guard_langgraph
+
+handler = guard_langgraph(Guard(max_usd=1.0, max_steps=25))
+graph.invoke(inputs, config={"callbacks": [handler]})
+```
+
 如果你更喜欢装饰器而不是上下文管理器：
 
 ```python
@@ -330,7 +354,7 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
 ### 诚实的局限
 
 - 不上报 usage 的响应无法计费。agent-guard 会警告一次，并记为 unpriced，而不是编一个数字。
-- 流式响应在流被消费完之前不带 usage。流式场景请自行收集最后的 usage，再调用 `guard.record(...)`。
+- 流式响应在流被消费完时才计价；一条没有上报 usage 的流会发出警告，而不是凭空编一个数字。对 OpenAI 兼容的流，记得传 `stream_options={"include_usage": True}`。
 - 预检的输入 token 是启发式估算，见上文。
 
 ---
@@ -342,6 +366,8 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
 | [`examples/basic.py`](examples/basic.py) | 从零到跑通的预算上限 |
 | [`examples/loop_detection.py`](examples/loop_detection.py) | 四个检测器，外加一个**必须不被触发**的健康场景 |
 | [`examples/wrapped_client.py`](examples/wrapped_client.py) | 零侵入记账，以及预检拒绝 |
+| [`examples/streaming.py`](examples/streaming.py) | 流式响应在消费完时恰好记录一次 |
+| [`examples/langgraph_demo.py`](examples/langgraph_demo.py) | LangGraph 回调：成本记账 + 工具死循环检测 |
 | [`examples/report_demo.py`](examples/report_demo.py) | 一份真实的多模型运行报告 |
 | [ROADMAP.md](ROADMAP.md) | 后续计划 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
@@ -361,7 +387,7 @@ pytest --cov=agentguard                     # 如果你更喜欢 pytest
 python examples/basic.py
 ```
 
-265 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+291 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

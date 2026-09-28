@@ -32,15 +32,11 @@ budget is gone. Worth exploring whether `guard.step()` should raise a dedicated
 `GuardStopped` once stopped, so the loop unwinds without any caller discipline —
 while still allowing cleanup.
 
-### Anthropic and OpenAI streaming helpers
+### ~~Anthropic and OpenAI streaming helpers~~ — shipped
 
-Streaming responses carry no usage until the stream is drained, so today you must
-call `guard.record(...)` yourself once it completes. A helper that wraps the stream
-and records the final usage chunk would close the last documented gap in the
-adapter layer.
-
-Blocked on: not wanting to import or require the SDKs. A duck-typed accumulator is
-the likely answer, but it needs designing against both providers' event shapes.
+Streaming responses are wrapped in a `GuardedStream` that records usage once,
+when the stream is drained; Anthropic's `messages.stream()` manager and async
+clients are covered the same way. See `examples/streaming.py`.
 
 ### `Guard.snapshot()` for checkpointing
 
@@ -78,10 +74,15 @@ that cannot clear all three makes the library worse, not better.
 
 ### Framework adapters
 
-LangGraph, CrewAI, Pydantic AI and the OpenAI Agents SDK all have a natural place to
-hook a guard. The work is not the wrapping; it is doing so without adding a
-dependency and without the adapter rotting when the framework changes its callback
-shape. Worth doing once a clear pattern emerges from real usage.
+**LangGraph is shipped**: `agentguard.integrations.langgraph.guard_langgraph`
+returns a callback handler that prices LLM calls and fingerprints tool calls for
+the loop detectors, without adding a dependency (langchain-core is subclassed
+lazily, only if already installed). See `examples/langgraph_demo.py`.
+
+CrewAI, Pydantic AI and the OpenAI Agents SDK all have a natural place to hook a
+guard. The work is not the wrapping; it is doing so without adding a dependency
+and without the adapter rotting when the framework changes its callback shape.
+Worth doing once a clear pattern emerges from real usage.
 
 ---
 

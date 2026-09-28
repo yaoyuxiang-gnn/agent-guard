@@ -435,6 +435,45 @@ class ContextTests(unittest.TestCase):
         with self.assertRaises(ValueError), guard:
             raise ValueError("from the agent")
 
+    def test_one_shared_guard_entered_from_two_threads(self) -> None:
+        # Regression: entry tokens live in a context-local stack, so two threads
+        # inside ``with guard:`` at the same time each pop their own token.
+        # A shared list pops the other thread's token and ``ContextVar.reset``
+        # raises "Token was created in a different Context".
+        guard = Guard()
+        first_inside = threading.Event()
+        second_inside = threading.Event()
+        errors: list[BaseException] = []
+
+        def first() -> None:
+            try:
+                with guard:
+                    first_inside.set()
+                    self.assertIs(current_guard(), guard)
+                    # Stay inside until the second thread is in too, so the two
+                    # entries genuinely overlap.
+                    second_inside.wait(timeout=5)
+            except BaseException as exc:  # reported to the test body
+                errors.append(exc)
+
+        def second() -> None:
+            try:
+                first_inside.wait(timeout=5)
+                with guard:
+                    self.assertIs(current_guard(), guard)
+                    second_inside.set()
+            except BaseException as exc:  # reported to the test body
+                errors.append(exc)
+
+        t1, t2 = threading.Thread(target=first), threading.Thread(target=second)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        self.assertEqual(errors, [])
+        self.assertIsNone(current_guard())
+
 
 class LifecycleTests(unittest.TestCase):
     def test_reset_clears_everything(self) -> None:

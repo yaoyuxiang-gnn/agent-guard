@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Streaming usage capture.** A wrapped client's `create(..., stream=True)` now
+  returns a `GuardedStream` that passes chunks through untouched and records the
+  call once, when the stream is drained; abandoning a stream records whatever
+  usage it saw, and a stream that reports nothing warns instead of counting `$0`.
+  OpenAI-style final-chunk usage and Anthropic-style `message_start` /
+  `message_delta` events are both understood, Anthropic's `messages.stream()`
+  context manager is handled (including `get_final_message()`), and the same
+  wrapping covers async clients (`await` a call, `async for` a stream).
+  `agentguard.adapters.GuardedStream` is exported for streams you drive by hand.
+- **LangGraph integration.** `agentguard.integrations.langgraph.guard_langgraph`
+  returns a callback handler that records LLM calls (`llm_output` token usage or
+  per-generation `usage_metadata`) and fingerprints tool calls for the loop
+  detectors. It subclasses `BaseCallbackHandler` when langchain-core is present
+  and falls back to a duck-typed class otherwise — no new dependency either way.
+  `raise_error` is set so a trip stops the run instead of being logged away.
+- **`agentguard[langgraph]` extra.**
+
+### Fixed
+
+- **Shared guard entered concurrently no longer crashes.** `Guard.__enter__` kept
+  its `ContextVar` tokens in one list on the instance, so two threads (or two
+  asyncio tasks) inside `with guard:` at the same time popped each other's token
+  and `__exit__` raised `ValueError: Token was created in a different Context`.
+  The entry stack is now context-local, which also makes `@guarded(guard=shared)`
+  safe on a thread pool.
 
 ## [0.1.0] - 2026-09-28
 

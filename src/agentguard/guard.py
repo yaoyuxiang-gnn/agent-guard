@@ -71,6 +71,15 @@ _current_guard: contextvars.ContextVar[Guard | None] = contextvars.ContextVar(
 _current_step: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "agentguard_step", default=None
 )
+# Tokens returned by ``_current_guard.set`` can only be reset in the context that
+# created them, so the entry stack must be context-local too. A plain list on the
+# Guard breaks a shared guard entered concurrently (two threads, or two asyncio
+# tasks, ``with guard:``): one side pops the other's token and ``reset`` raises
+# ValueError. An immutable tuple per context keeps each thread/task on its own
+# stack while nesting stays LIFO within one context.
+_entry_tokens: contextvars.ContextVar[tuple[contextvars.Token[Any], ...]] = contextvars.ContextVar(
+    "agentguard_entry_tokens", default=()
+)
 
 
 def current_guard() -> Guard | None:
@@ -201,7 +210,6 @@ class Guard:
         "_on_unknown_model",
         "_progress_monitor",
         "_steps",
-        "_tokens",
         "_tracker",
         "_tripped",
         "_warned_empty",
@@ -248,7 +256,6 @@ class Guard:
         self._on_unknown_model = on_unknown_model
         self._default_price = default_price
         self._tripped: GuardTripped | None = None
-        self._tokens: list[contextvars.Token[Any]] = []
         self._warned_empty = False
 
         table = price_table if price_table is not None else PriceTable(overrides=pricing)
@@ -274,7 +281,7 @@ class Guard:
     # -- lifecycle -----------------------------------------------------------
 
     def __enter__(self) -> Guard:
-        self._tokens.append(_current_guard.set(self))
+        _entry_tokens.set((*_entry_tokens.get(), _current_guard.set(self)))
         return self
 
     def __exit__(
@@ -283,8 +290,10 @@ class Guard:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> Literal[False]:
-        if self._tokens:
-            _current_guard.reset(self._tokens.pop())
+        tokens = _entry_tokens.get()
+        if tokens:
+            _entry_tokens.set(tokens[:-1])
+            _current_guard.reset(tokens[-1])
         return False
 
     def reset(self) -> None:

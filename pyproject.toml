@@ -53,6 +53,7 @@ dev = [
 ]
 openai = ["openai>=1.40"]
 anthropic = ["anthropic>=0.34"]
+langgraph = ["langgraph>=0.2"]
 
 [project.urls]
 Homepage = "https://github.com/yaoyuxiang-gnn/agent-guard"
@@ -135,5 +136,5 @@ files = ["src/agentguard"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["openai.*", "anthropic.*"]
+module = ["openai.*", "anthropic.*", "langchain_core.*"]
 ignore_missing_imports = true

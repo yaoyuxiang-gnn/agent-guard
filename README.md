@@ -278,6 +278,35 @@ from agentguard.adapters.anthropic import guard_anthropic
 client = guard_anthropic(Anthropic(), max_usd=2.0)
 ```
 
+**Streaming just works.** Pass `stream=True` and the response is wrapped in a
+`GuardedStream`: chunks pass through untouched, and usage is recorded once, when
+the stream is drained (or whatever was seen, if you abandon it early). Anthropic's
+`messages.stream()` context manager and async clients (`async for`) are covered
+the same way:
+
+```python
+stream = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[...],
+    stream=True,
+    stream_options={"include_usage": True},   # so the final chunk carries usage
+)
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
+# recorded here, exactly once
+```
+
+**LangGraph** agents are guarded with one callback handler — LLM calls are
+priced, and tool calls feed the loop detectors:
+
+```python
+from agentguard import Guard
+from agentguard.integrations.langgraph import guard_langgraph
+
+handler = guard_langgraph(Guard(max_usd=1.0, max_steps=25))
+graph.invoke(inputs, config={"callbacks": [handler]})
+```
+
 For a decorator instead of a context manager:
 
 ```python
@@ -372,8 +401,9 @@ Being explicit about scope is cheaper than a GitHub issue.
 
 - A response that reports no usage cannot be priced. agent-guard warns once and
   counts it as unpriced rather than inventing a number.
-- Streaming responses carry no usage until drained. For streams, collect the final
-  usage chunk yourself and call `guard.record(...)` once.
+- A stream is priced when it is drained; one that reports no usage warns instead
+  of inventing a number. For OpenAI-compatible streams, remember
+  `stream_options={"include_usage": True}`.
 - Pre-flight input estimates are heuristic. See above.
 
 ---
@@ -385,6 +415,8 @@ Being explicit about scope is cheaper than a GitHub issue.
 | [`examples/basic.py`](examples/basic.py) | Budget cap, start to finish |
 | [`examples/loop_detection.py`](examples/loop_detection.py) | All four detectors, plus a healthy run that must not trip |
 | [`examples/wrapped_client.py`](examples/wrapped_client.py) | Zero-touch recording, and pre-flight refusal |
+| [`examples/streaming.py`](examples/streaming.py) | Recording a streamed response, once, on drain |
+| [`examples/langgraph_demo.py`](examples/langgraph_demo.py) | LangGraph callbacks: cost accounting plus tool-loop detection |
 | [`examples/report_demo.py`](examples/report_demo.py) | A realistic multi-model run report |
 | [ROADMAP.md](ROADMAP.md) | What is planned next |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
@@ -405,7 +437,7 @@ pytest --cov=agentguard                     # if you prefer pytest
 python examples/basic.py
 ```
 
-265 tests, no network, no fixtures to download. See [CONTRIBUTING.md](CONTRIBUTING.md).
+291 tests, no network, no fixtures to download. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
