@@ -30,7 +30,7 @@ def guard_anthropic(
     the cached rate when one is known::
 
         from anthropic import Anthropic
-        from agent_guard.adapters.anthropic import guard_anthropic
+        from agentguard.adapters.anthropic import guard_anthropic
 
         client = guard_anthropic(Anthropic(), max_usd=2.0, max_steps=40)
         message = client.messages.create(...)   # recorded, no extra code

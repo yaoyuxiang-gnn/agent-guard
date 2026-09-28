@@ -9,8 +9,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from agent_guard import Guard
-from agent_guard.cli import main
+from agentguard import Guard
+from agentguard.cli import main
 
 
 def run_cli(*argv: str) -> tuple[int, str, str]:
@@ -105,7 +105,7 @@ class GeneralTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx, redirect_stdout(out):
             main(["--version"])
         self.assertEqual(ctx.exception.code, 0)
-        self.assertIn("agent-guard", out.getvalue())
+        self.assertIn("agentguard", out.getvalue())
 
     def test_unknown_command_exits_non_zero(self) -> None:
         err = io.StringIO()

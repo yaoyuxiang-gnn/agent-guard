@@ -1,9 +1,9 @@
-"""Decorator form of :class:`~agent_guard.Guard`.
+"""Decorator form of :class:`~agentguard.Guard`.
 
 Useful when an agent is a single function and you would rather not thread a guard
 object through it::
 
-    from agent_guard import guarded, current_guard
+    from agentguard import guarded, current_guard
 
     @guarded(max_usd=0.50, max_steps=20)
     def summarise(url: str) -> str:
@@ -30,7 +30,7 @@ def guarded(
     guard: Guard | None = None,
     **guard_kwargs: Any,
 ) -> Callable[[F], F]:
-    """Run the decorated function inside a :class:`~agent_guard.Guard`.
+    """Run the decorated function inside a :class:`~agentguard.Guard`.
 
     Pass either an existing ``guard`` or the keyword arguments for a new one —
     never both.
@@ -41,8 +41,8 @@ def guarded(
       default for request handlers: one caller exhausting a budget must not stop
       the next one.
 
-    Inside the function, :func:`~agent_guard.current_guard` returns the active
-    guard, and :func:`~agent_guard.Guard.current` does the same::
+    Inside the function, :func:`~agentguard.current_guard` returns the active
+    guard, and :func:`~agentguard.Guard.current` does the same::
 
         @guarded(max_usd=1.0, max_steps=30)
         def run_agent(task: str) -> str:
@@ -71,8 +71,8 @@ def guarded(
                 return func(*args, **kwargs)
 
         # Give callers a handle for introspection and testing.
-        wrapper.__agent_guard_options__ = dict(guard_kwargs)  # type: ignore[attr-defined]
-        wrapper.__agent_guard_shared__ = guard  # type: ignore[attr-defined]
+        wrapper.__agentguard_options__ = dict(guard_kwargs)  # type: ignore[attr-defined]
+        wrapper.__agentguard_shared__ = guard  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
 
     return decorator

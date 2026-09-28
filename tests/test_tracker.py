@@ -7,8 +7,8 @@ import unittest
 import warnings
 from types import SimpleNamespace as NS
 
-from agent_guard import GuardConfigError, Price, PriceTable, Usage
-from agent_guard.tracker import CostTracker, extract_model, extract_usage
+from agentguard import GuardConfigError, Price, PriceTable, Usage
+from agentguard.tracker import CostTracker, extract_model, extract_usage
 
 
 def openai_response(

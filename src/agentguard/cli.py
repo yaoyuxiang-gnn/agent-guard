@@ -2,10 +2,10 @@
 
 .. code-block:: console
 
-   $ agent-guard report run.json
-   $ agent-guard report run.json --json
-   $ agent-guard pricing gpt-4o
-   $ agent-guard pricing
+   $ agentguard report run.json
+   $ agentguard report run.json --json
+   $ agentguard pricing gpt-4o
+   $ agentguard pricing
 
 The ``report`` subcommand exists so that a long-running job can dump its guard
 report to JSON and something else — CI, a cron job, a human — can read it later
@@ -30,10 +30,10 @@ __all__ = ["main"]
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agent-guard",
-        description="Inspect agent-guard cost reports and bundled model prices.",
+        prog="agentguard",
+        description="Inspect agentguard cost reports and bundled model prices.",
     )
-    parser.add_argument("--version", action="version", version=f"agent-guard {__version__}")
+    parser.add_argument("--version", action="version", version=f"agentguard {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     report = sub.add_parser(
@@ -62,7 +62,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point for the ``agent-guard`` console script."""
+    """Entry point for the ``agentguard`` console script."""
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -78,17 +78,17 @@ def _cmd_report(args: argparse.Namespace) -> int:
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        print(f"agent-guard: cannot read {path}: {exc}", file=sys.stderr)
+        print(f"agentguard: cannot read {path}: {exc}", file=sys.stderr)
         return 2
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        print(f"agent-guard: {path} is not valid JSON: {exc}", file=sys.stderr)
+        print(f"agentguard: {path} is not valid JSON: {exc}", file=sys.stderr)
         return 2
 
     if not isinstance(data, dict):
-        print(f"agent-guard: {path} must contain a JSON object", file=sys.stderr)
+        print(f"agentguard: {path} must contain a JSON object", file=sys.stderr)
         return 2
 
     report = Report.from_dict(data)
@@ -106,7 +106,7 @@ def _cmd_pricing(args: argparse.Namespace) -> int:
         resolved = table.resolve(args.model)
         if resolved is None:
             print(
-                f"agent-guard: no bundled price for {args.model!r} "
+                f"agentguard: no bundled price for {args.model!r} "
                 f"(snapshot {PRICING_AS_OF}).",
                 file=sys.stderr,
             )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from agent_guard import (
+from agentguard import (
     BudgetExceeded,
     Detector,
     Guard,
@@ -129,7 +129,7 @@ class PlumbingTests(unittest.TestCase):
             pass
 
         self.assertEqual(
-            run.__agent_guard_options__,  # type: ignore[attr-defined]
+            run.__agentguard_options__,  # type: ignore[attr-defined]
             {"max_usd": 1.0, "max_steps": 5},
         )
 
@@ -140,7 +140,7 @@ class PlumbingTests(unittest.TestCase):
         def run() -> None:
             pass
 
-        self.assertIs(run.__agent_guard_shared__, shared)  # type: ignore[attr-defined]
+        self.assertIs(run.__agentguard_shared__, shared)  # type: ignore[attr-defined]
 
 
 class ConfigurationTests(unittest.TestCase):

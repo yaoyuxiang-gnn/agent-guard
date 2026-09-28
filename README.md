@@ -8,8 +8,8 @@ Budget caps, runaway-loop detection and circuit breakers for AI agents.
 Zero dependencies. No provider SDK. No server. No telemetry.
 
 [![CI](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/agent-guard.svg)](https://pypi.org/project/agent-guard/)
-[![Python versions](https://img.shields.io/pypi/pyversions/agent-guard.svg)](https://pypi.org/project/agent-guard/)
+[![PyPI](https://img.shields.io/pypi/v/agentguard.svg)](https://pypi.org/project/agentguard/)
+[![Python versions](https://img.shields.io/pypi/pyversions/agentguard.svg)](https://pypi.org/project/agentguard/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#design-principles)
 
@@ -39,17 +39,22 @@ A budget check that runs *after* the call can only tell you what you already spe
 | **A receipt** | A cost report you can paste into an issue |
 
 ```bash
-pip install agent-guard
+pip install agentguard
 ```
 
 Python 3.10+. **No runtime dependencies** — not even a provider SDK.
+
+> **About the name.** The package, the import and the CLI are all `agentguard` (no hyphen).
+> An unrelated project already owns `agent-guard` on PyPI, so `pip install agent-guard`
+> installs *that* one rather than this. The GitHub repository keeps the hyphen because it
+> reads better in prose.
 
 ---
 
 ## Quickstart
 
 ```python
-from agent_guard import BudgetExceeded, Guard
+from agentguard import BudgetExceeded, Guard
 
 guard = Guard(max_usd=1.00, max_steps=25, name="research-agent")
 
@@ -161,7 +166,7 @@ python examples/loop_detection.py
 A detector is a small state machine fed one signature per observation:
 
 ```python
-from agent_guard import Detector, LoopVerdict
+from agentguard import Detector, LoopVerdict
 
 class SchemaThrashDetector(Detector):
     """Trip when the agent migrates the same table back and forth."""
@@ -210,7 +215,7 @@ guard.preflight("gpt-4o", input_tokens=180_000, max_output_tokens=16_000)
 Turn it on for a whole client with one flag:
 
 ```python
-from agent_guard.adapters.openai import guard_openai
+from agentguard.adapters.openai import guard_openai
 
 client = guard_openai(OpenAI(), max_usd=0.05, preflight=True)
 
@@ -257,7 +262,7 @@ with Guard(max_usd=1.0, max_steps=25) as guard:
 
 ```python
 from openai import OpenAI
-from agent_guard.adapters.openai import guard_openai
+from agentguard.adapters.openai import guard_openai
 
 client = guard_openai(OpenAI(), max_usd=1.0, max_steps=25)
 response = client.chat.completions.create(...)   # recorded automatically
@@ -268,7 +273,7 @@ wrapper covers **Anthropic, LiteLLM, OpenRouter, vLLM, Together, Groq and Azure
 OpenAI**:
 
 ```python
-from agent_guard.adapters.anthropic import guard_anthropic
+from agentguard.adapters.anthropic import guard_anthropic
 
 client = guard_anthropic(Anthropic(), max_usd=2.0)
 ```
@@ -276,7 +281,7 @@ client = guard_anthropic(Anthropic(), max_usd=2.0)
 For a decorator instead of a context manager:
 
 ```python
-from agent_guard import current_guard, guarded
+from agentguard import current_guard, guarded
 
 @guarded(max_usd=0.50, max_steps=20)
 def summarise(url: str) -> str:
@@ -293,14 +298,14 @@ Pass `guard=` an existing guard when spend should accumulate across calls.
 ## Command line
 
 ```bash
-$ agent-guard report run.json          # render a report saved by guard.save(...)
-$ agent-guard report run.json --json
-$ agent-guard pricing gpt-4o
-$ agent-guard pricing | head
+$ agentguard report run.json          # render a report saved by guard.save(...)
+$ agentguard report run.json --json
+$ agentguard pricing gpt-4o
+$ agentguard pricing | head
 ```
 
 ```
-$ agent-guard pricing gpt-4o
+$ agentguard pricing gpt-4o
 gpt-4o  (USD per 1M tokens, snapshot 2026-01)
 
   input        $2.5 / 1M
@@ -313,7 +318,7 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
     10k in + 2k out          $0.045
 ```
 
-`guard.save("run.json")` in the worker, `agent-guard report run.json` in CI. The
+`guard.save("run.json")` in the worker, `agentguard report run.json` in CI. The
 reading process does not need agent-guard installed as a dependency of anything
 except its own CLI.
 
@@ -354,7 +359,7 @@ Being explicit about scope is cheaper than a GitHub issue.
 - **Not a proxy.** It does not sit between you and your provider, and it cannot see
   traffic it was not told about.
 - **Not a tokenizer.** Bundled prices are an indicative snapshot
-  ([`PRICING_AS_OF`](src/agent_guard/pricing.py)). Verify anything you bill on, and
+  ([`PRICING_AS_OF`](src/agentguard/pricing.py)). Verify anything you bill on, and
   override what matters:
   ```python
   Guard(pricing={"my-finetune-v3": Price(3.00, 12.00)})
@@ -396,7 +401,7 @@ git clone https://github.com/yaoyuxiang-gnn/agent-guard
 cd agent-guard
 
 python -m unittest discover -s tests -t .   # no install required
-pytest --cov=agent_guard                     # if you prefer pytest
+pytest --cov=agentguard                     # if you prefer pytest
 python examples/basic.py
 ```
 

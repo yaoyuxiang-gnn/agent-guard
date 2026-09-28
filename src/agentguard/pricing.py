@@ -12,7 +12,7 @@ turn token counts into dollars with no network call and no vendor SDK.
 
    .. code-block:: python
 
-      from agent_guard import Guard, Price
+      from agentguard import Guard, Price
 
       guard = Guard(
           max_usd=5.0,
@@ -92,7 +92,7 @@ class Price:
     def worst_case_usd(self, *, input_tokens: int, max_output_tokens: int) -> float:
         """Upper bound on a call whose output length is only known as a cap.
 
-        This is what :meth:`agent_guard.Guard.preflight` uses to refuse a call
+        This is what :meth:`agentguard.Guard.preflight` uses to refuse a call
         that *could* blow the budget, before any money is spent.
         """
         return self.cost_usd(

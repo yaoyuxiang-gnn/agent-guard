@@ -5,7 +5,7 @@ whole agent run in ``except GuardError`` is always safe. Errors that *stopped* a
 run additionally derive from :class:`GuardTripped`, which lets you handle
 "the agent was cut off" uniformly no matter which limit fired::
 
-    from agent_guard import Guard, GuardTripped
+    from agentguard import Guard, GuardTripped
 
     guard = Guard(max_usd=0.01)
     try:
@@ -42,7 +42,7 @@ class GuardError(Exception):
 class GuardConfigError(GuardError, ValueError):
     """agent-guard was configured in a way that cannot work.
 
-    Raised eagerly, while the :class:`~agent_guard.Guard` is being constructed,
+    Raised eagerly, while the :class:`~agentguard.Guard` is being constructed,
     rather than in the middle of an agent run. A misconfigured guard should fail
     loudly at import time, never as a mysterious mid-run exception.
     """

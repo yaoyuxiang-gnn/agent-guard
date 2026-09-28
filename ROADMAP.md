@@ -59,7 +59,7 @@ learn a new model's price is a poor answer. The tension is the no-I/O rule: fetc
 prices at import time is exactly the kind of hidden network call this library
 refuses to make.
 
-Likely shape: an explicit, opt-in `agent-guard pricing --update` that writes a local
+Likely shape: an explicit, opt-in `agentguard pricing --update` that writes a local
 cache file, with the bundled table always the fallback. Never automatic.
 
 ### Additional detectors, if they earn their place

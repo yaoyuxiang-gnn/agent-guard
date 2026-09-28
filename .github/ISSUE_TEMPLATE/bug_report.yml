@@ -61,7 +61,7 @@ body:
     id: version
     attributes:
       label: agent-guard version
-      description: "`python -c \"import agent_guard; print(agent_guard.__version__)\"`"
+      description: "`python -c \"import agentguard; print(agentguard.__version__)\"`"
       placeholder: "0.1.0"
     validations:
       required: true

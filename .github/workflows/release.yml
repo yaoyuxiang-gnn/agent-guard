@@ -26,7 +26,7 @@ jobs:
           import os, pathlib, re, sys
           version = re.search(
               r'__version__\s*=\s*"([^"]+)"',
-              pathlib.Path("src/agent_guard/_version.py").read_text(encoding="utf-8"),
+              pathlib.Path("src/agentguard/_version.py").read_text(encoding="utf-8"),
           ).group(1)
           tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
           if version != tag:
@@ -56,7 +56,7 @@ jobs:
     # no API token ever has to live in repository secrets.
     environment:
       name: pypi
-      url: https://pypi.org/p/agent-guard
+      url: https://pypi.org/p/agentguard
     permissions:
       id-token: write
     steps:

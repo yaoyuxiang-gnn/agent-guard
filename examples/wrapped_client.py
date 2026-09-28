@@ -15,8 +15,8 @@ from __future__ import annotations
 from types import SimpleNamespace as NS
 from typing import Any
 
-from agent_guard import BudgetExceeded, Guard
-from agent_guard.adapters.openai import guard_openai
+from agentguard import BudgetExceeded, Guard
+from agentguard.adapters.openai import guard_openai
 
 
 class _Completions:

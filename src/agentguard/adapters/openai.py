@@ -33,7 +33,7 @@ def guard_openai(
     Pass an existing ``guard``, or Guard keyword arguments to create one::
 
         from openai import OpenAI
-        from agent_guard.adapters.openai import guard_openai
+        from agentguard.adapters.openai import guard_openai
 
         client = guard_openai(OpenAI(), max_usd=1.0, max_steps=25)
         response = client.chat.completions.create(...)   # recorded, no extra code

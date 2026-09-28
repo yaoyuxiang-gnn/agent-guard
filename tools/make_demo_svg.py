@@ -66,7 +66,7 @@ def classify(line: str) -> str:
     stripped = line.strip()
     if not stripped:
         return "dim"
-    if stripped.startswith("agent-guard"):
+    if stripped.startswith("agentguard"):
         return "title"
     if _RULE.match(stripped):
         return "rule"
@@ -102,7 +102,7 @@ def capture() -> list[str]:
     env["PYTHONPATH"] = str(ROOT / "src")
     # Force ASCII so the captured text is identical on every machine, and the
     # SVG does not depend on the box-drawing glyphs being present in the font.
-    env["AGENT_GUARD_ASCII"] = "1"
+    env["AGENTGUARD_ASCII"] = "1"
 
     result = subprocess.run(
         [sys.executable, str(EXAMPLE)],
@@ -135,8 +135,8 @@ def render(lines: list[str]) -> str:
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" role="img" '
-        f'aria-label="agent-guard stopping an agent that exceeded its budget">',
-        "<title>agent-guard stopping an agent that exceeded its budget</title>",
+        'aria-label="agentguard stopping an agent that exceeded its budget">',
+        "<title>agentguard stopping an agent that exceeded its budget</title>",
         "<style>",
         f"  text {{ font-family: {FONT_STACK}; font-size: {FONT_SIZE}px; "
         f"white-space: pre; }}",

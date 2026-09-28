@@ -343,13 +343,13 @@ class CostTracker:
         if self._on_unknown_model == "warn" and not already_warned:
             if model == "unknown":
                 message = (
-                    "agent-guard could not determine the model for a recorded call, so "
+                    "agentguard could not determine the model for a recorded call, so "
                     "it counts as $0 and will not move the budget. Pass model= (or a "
                     "response carrying .model) to record it properly."
                 )
             else:
                 message = (
-                    f"agent-guard has no price for model {model!r}; its cost is excluded "
+                    f"agentguard has no price for model {model!r}; its cost is excluded "
                     f"from the budget and counted as unpriced. Add a pricing override to "
                     f"include it."
                 )

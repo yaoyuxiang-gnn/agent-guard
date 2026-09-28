@@ -8,8 +8,8 @@ anything else following the same convention.
 .. code-block:: python
 
    from openai import OpenAI
-   from agent_guard import Guard
-   from agent_guard.adapters.openai import guard_openai
+   from agentguard import Guard
+   from agentguard.adapters.openai import guard_openai
 
    guard = Guard(max_usd=1.0, max_steps=25)
    client = guard_openai(OpenAI(), guard)
@@ -191,8 +191,8 @@ def guard_client(
 ) -> GuardedClient:
     """Wrap any LLM client so calls are recorded onto ``guard``.
 
-    Use :func:`agent_guard.adapters.openai.guard_openai` or
-    :func:`agent_guard.adapters.anthropic.guard_anthropic` for the common cases;
+    Use :func:`agentguard.adapters.openai.guard_openai` or
+    :func:`agentguard.adapters.anthropic.guard_anthropic` for the common cases;
     this is the generic escape hatch for LiteLLM, OpenRouter, vLLM and friends.
     """
     if guard is None:
