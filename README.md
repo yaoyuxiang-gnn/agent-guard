@@ -590,7 +590,7 @@ pytest --cov=agentguard                     # if you prefer pytest
 python examples/basic.py
 ```
 
-473 tests, no network, no fixtures to download. See [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md).
+474 tests, no network, no fixtures to download. See [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md).
 
 ---
 

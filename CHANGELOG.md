@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [0.2.1] - 2026-09-28
+
+### Fixed
+
+- **The macOS test failure that kept CI red from 0.2.0 onward.** macOS reaches its
+  temporary directory through `/var`, a symlink to `/private/var`, so `os.getcwd()`
+  spells that path differently from `tempfile` — and two assertions compared the two
+  spellings instead of the two files, which fails on the one platform whose temporary
+  path contains a symlink. Paths are compared by identity now. The README's CI badge
+  is green again, and macOS runs the examples for the first time.
+- **`agentguard config set --file <relative path>` no longer denies its own write.**
+  It wrote the file correctly and then reported "not in effect (no config file); set
+  `AGENTGUARD_CONFIG` or edit that file instead" — the same spelling comparison, in
+  the CLI — when the file it had just written was the project config, whose honest
+  note is the one about trust.
+- **The same command no longer prints a library warning.** `config set` leaked
+  `RuntimeWarning: agentguard is ignoring the project config at ...` with a
+  `cli.py:NNN:` source line above its own note. That warning is meant for library
+  callers; the CLI says the same thing in its own voice.
+
+### Changed
+
+- **The README renders on PyPI.** PyPI shows `README.md` as the package description
+  and does not resolve relative paths, so the published page had a broken hero image
+  and fifteen dead links. Every link and image in `README.md` is an absolute URL now,
+  and `docs/demo.svg` was regenerated against the current report — it is a screenshot
+  of real program output, and 0.2.0's attribution feature had added a `by tag`
+  breakdown to it.
+- The roadmap records what 0.2 shipped and moves the checkpointing work to 0.3.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added
@@ -169,6 +199,7 @@ distribution name carries the long form: the import and the console script are b
   and Windows.
 - 265 tests, including every docstring example.
 
-[Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/yaoyuxiang-gnn/agent-guard/releases/tag/v0.2.0
 [0.1.0]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.1.0...v0.2.0
