@@ -25,12 +25,14 @@ from agentguard import (
     LoopVerdict,
     Price,
     RepeatDetector,
+    Report,
     StepLimitExceeded,
     TimeLimitExceeded,
     TokenLimitExceeded,
     current_guard,
 )
 from agentguard.guard import Step
+from agentguard.tracker import UNATTRIBUTED
 
 
 class FakeClock:
@@ -608,6 +610,110 @@ class LifecycleTests(unittest.TestCase):
         guard.reset()
         with self.assertRaises(GuardConfigError):
             guard.record("mystery", input_tokens=1)
+
+
+class AttributionTests(unittest.TestCase):
+    """Which tool is eating the budget? The report should answer it directly."""
+
+    def build(self) -> Guard:
+        guard = Guard(max_usd=5.0, name="attribution")
+        with guard.step(tag="search") as step:
+            step.record("gpt-4o", input_tokens=20_000, output_tokens=1_000)
+        with guard.step(tag="summarise") as step:
+            with step.tool("fetch", {"url": "x"}):
+                step.record("gpt-4o", input_tokens=50_000, output_tokens=2_000)
+            step.record("gpt-4o-mini", input_tokens=10_000, output_tokens=500)
+        guard.record("gpt-4o-mini", input_tokens=1_000, output_tokens=100)
+        return guard
+
+    def test_a_call_inside_a_tool_block_is_attributed_to_it(self) -> None:
+        guard = Guard(max_usd=5.0)
+        with guard.tool("fetch", {"url": "x"}):
+            guard.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+        record = guard.tracker.records[0]
+        self.assertEqual(record.tool, "fetch")
+        self.assertAlmostEqual(guard.report().by_tool[0].cost_usd, 0.0025)
+
+    def test_a_step_tool_block_attributes_too(self) -> None:
+        guard = Guard(max_usd=5.0)
+        with guard.step() as step, step.tool("search", {"q": "x"}):
+            step.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+        self.assertEqual(guard.tracker.records[0].tool, "search")
+
+    def test_the_tool_attribution_ends_with_the_block(self) -> None:
+        guard = Guard(max_usd=5.0)
+        with guard.tool("fetch"):
+            guard.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+        guard.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+        self.assertIsNone(guard.tracker.records[1].tool)
+
+    def test_nesting_restores_the_outer_tool(self) -> None:
+        guard = Guard(max_usd=5.0)
+        with guard.tool("outer"):
+            with guard.tool("inner"):
+                guard.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+            guard.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+        tools = [record.tool for record in guard.tracker.records]
+        self.assertEqual(tools, ["inner", "outer"])
+
+    def test_an_explicit_tool_argument_wins(self) -> None:
+        guard = Guard(max_usd=5.0)
+        with guard.tool("outer"):
+            guard.record("gpt-4o", input_tokens=1_000, output_tokens=0, tool="explicit")
+        self.assertEqual(guard.tracker.records[0].tool, "explicit")
+
+    def test_the_tool_is_restored_even_when_the_body_raises(self) -> None:
+        guard = Guard(max_usd=5.0)
+        with self.assertRaises(ValueError), guard.tool("fetch"):
+            raise ValueError("tool blew up")
+        guard.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+        self.assertIsNone(guard.tracker.records[0].tool)
+
+    def test_the_report_breaks_cost_down_by_tag_and_tool(self) -> None:
+        report = self.build().report()
+        tags = {s.name: s for s in report.by_tag}
+        tools = {s.name: s for s in report.by_tool}
+        self.assertEqual(set(tags), {"search", "summarise", UNATTRIBUTED})
+        self.assertEqual(set(tools), {"fetch", UNATTRIBUTED})
+        # Both breakdowns add up to the run total: nothing is silently dropped.
+        for breakdown in (report.by_tag, report.by_tool):
+            self.assertAlmostEqual(sum(s.cost_usd for s in breakdown), report.cost_usd)
+
+    def test_the_text_report_shows_the_breakdowns(self) -> None:
+        text = self.build().report().render(ascii_only=True)
+        self.assertIn("by tag", text)
+        self.assertIn("by tool", text)
+        self.assertIn("fetch", text)
+        self.assertIn(UNATTRIBUTED, text)
+
+    def test_a_single_bucket_is_not_worth_printing(self) -> None:
+        # One tag just repeats the total, so the section stays out of the way.
+        guard = Guard(max_usd=5.0)
+        with guard.step(tag="only") as step:
+            step.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+        report = guard.report()
+        self.assertEqual(len(report.by_tag), 1)
+        self.assertNotIn("by tag", report.render(ascii_only=True))
+
+    def test_long_breakdowns_collapse_their_tail(self) -> None:
+        guard = Guard(max_usd=5.0)
+        for index in range(7):
+            with guard.step(tag=f"tag-{index}") as step:
+                step.record("gpt-4o", input_tokens=1_000, output_tokens=0)
+        text = guard.report().render(ascii_only=True)
+        self.assertIn("... 2 more", text)
+
+    def test_the_breakdown_survives_a_json_round_trip(self) -> None:
+        report = self.build().report()
+        restored = Report.from_dict(json.loads(json.dumps(report.as_dict())))
+        self.assertEqual(
+            [(s.name, s.calls) for s in restored.by_tag],
+            [(s.name, s.calls) for s in report.by_tag],
+        )
+        self.assertEqual(
+            [(s.name, s.calls) for s in restored.by_tool],
+            [(s.name, s.calls) for s in report.by_tool],
+        )
 
 
 class ReportingTests(unittest.TestCase):

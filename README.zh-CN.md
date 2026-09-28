@@ -386,6 +386,33 @@ $ agentguard pricing
 
 ---
 
+## 钱花在哪了
+
+按模型看成本回答的是"什么贵"；按步骤 tag 和按工具看成本回答的是"谁在花"——后者才是决定你下一步改什么的那个问题：
+
+```python
+with guard.step(tag="retrieval") as step:
+    with step.tool("search", {"q": query}):
+        step.record(response)          # 同时归到 `search` 和 `retrieval`
+```
+
+`guard.report()` 会同时带上这三份拆分，文本报告只打印有信息量的那些：
+
+```
+  by tag
+    summarise        2 calls     $0.1468
+    retrieval        1 call        $0.06
+    (unattributed)   1 call     $0.00021
+
+  by tool
+    search           1 call       $0.145
+    (unattributed)   3 calls      $0.062
+```
+
+`(unattributed)` 一定会在里面，这样各部分加起来正好等于总花费，而不是讲一个看起来完整、其实是片面的故事。只有一个桶的拆分不会出现在文本报告里（一行等于把总数又说了一遍），过长的拆分会把尾部折叠成 `... 3 more`。`report().by_tag` / `.by_tool` 返回 `AttributionSummary` 对象，`guard.to_json()` 会带上这两个列表，运行中也可以直接用 `guard.tracker.by_tool()` 拿到同样的数字。
+
+---
+
 ## 命令行
 
 ```bash

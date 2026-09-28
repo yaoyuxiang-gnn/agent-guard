@@ -73,6 +73,11 @@ _current_guard: contextvars.ContextVar[Guard | None] = contextvars.ContextVar(
 _current_step: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "agentguard_step", default=None
 )
+#: The tool whose ``with guard.tool(...)`` block is on the stack, so a call made
+#: inside it can be attributed to that tool without the call site repeating itself.
+_current_tool: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "agentguard_tool", default=None
+)
 # Tokens returned by ``_current_guard.set`` can only be reset in the context that
 # created them, so the entry stack must be context-local too. A plain list on the
 # Guard breaks a shared guard entered concurrently (two threads, or two asyncio
@@ -474,6 +479,7 @@ class Guard:
         reasoning_tokens: int | None = None,
         tag: str | None = None,
         step: int | None = None,
+        tool: str | None = None,
         meta: Mapping[str, Any] | None = None,
         price: Price | None = None,
     ) -> CallRecord:
@@ -516,6 +522,7 @@ class Guard:
 
         resolved_model = model or extract_model(response) or "unknown"
         step_index = step if step is not None else _current_step.get()
+        tool_name = tool if tool is not None else _current_tool.get()
 
         # A response that reports no usage at all is the single most dangerous
         # silent failure for a budget guard: the call happens, the cap never
@@ -543,6 +550,7 @@ class Guard:
             elapsed_s=self.elapsed_s,
             tag=tag,
             step=step_index,
+            tool=tool_name,
             meta=meta,
             price=price,
         )
@@ -621,11 +629,19 @@ class Guard:
         stopped before it executes the same side effect a fourth time — and a guard
         that has already tripped refuses to enter at all, so a stopped run cannot
         keep performing side effects.
+
+        While the block is open, every call recorded inside it is attributed to
+        ``name``, which is what makes ``report().by_tool()`` answer "which tool is
+        eating my budget?". Nested blocks attribute to the innermost tool.
         """
         self.raise_if_tripped()
         signature = call_signature(name, args)
         self.observe(signature, step=step)
-        yield signature
+        token = _current_tool.set(name)
+        try:
+            yield signature
+        finally:
+            _current_tool.reset(token)
 
     def progress(self, value: Any, *, step: int | None = None) -> None:
         """Report a progress marker, so stagnation can be detected.
@@ -731,6 +747,8 @@ class Guard:
     def report(self) -> Report:
         """Snapshot this run as a :class:`~agentguard.Report`."""
         by_model = tuple(self._tracker.by_model().values())
+        by_tag = tuple(self._tracker.by_tag().values())
+        by_tool = tuple(self._tracker.by_tool().values())
         trip_verdict: LoopVerdict | None = None
         tripped_reason: str | None = None
 
@@ -763,6 +781,8 @@ class Guard:
                 max_seconds=self._max_seconds,
             ),
             by_model=by_model,
+            by_tag=by_tag,
+            by_tool=by_tool,
             unpriced_models=self._tracker.unpriced_models,
             unpriced_calls=self._tracker.unpriced_calls,
             trip=trip_verdict,

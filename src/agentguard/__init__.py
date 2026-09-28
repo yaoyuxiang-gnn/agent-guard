@@ -75,7 +75,14 @@ from .loop import (
 )
 from .pricing import DEFAULT_PRICING, PRICING_AS_OF, Price, PriceTable
 from .report import LimitStatus, Report
-from .tracker import CallRecord, CostTracker, ModelSummary, Usage
+from .tracker import (
+    UNATTRIBUTED,
+    AttributionSummary,
+    CallRecord,
+    CostTracker,
+    ModelSummary,
+    Usage,
+)
 
 __all__ = [
     # core
@@ -107,6 +114,8 @@ __all__ = [
     "CallRecord",
     "CostTracker",
     "ModelSummary",
+    "AttributionSummary",
+    "UNATTRIBUTED",
     "Price",
     "PriceTable",
     "DEFAULT_PRICING",

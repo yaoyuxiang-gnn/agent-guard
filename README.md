@@ -429,6 +429,40 @@ must never quietly change what a budget means.
 
 ---
 
+## Where the money went
+
+Cost by model answers "what is expensive". Cost by step tag and by tool answers
+"who is spending it", which is the question that changes what you do next:
+
+```python
+with guard.step(tag="retrieval") as step:
+    with step.tool("search", {"q": query}):
+        step.record(response)          # attributed to `search` *and* `retrieval`
+```
+
+`guard.report()` then carries all three breakdowns, and the text report prints the
+ones that say something:
+
+```
+  by tag
+    summarise        2 calls     $0.1468
+    retrieval        1 call        $0.06
+    (unattributed)   1 call     $0.00021
+
+  by tool
+    search           1 call       $0.145
+    (unattributed)   3 calls      $0.062
+```
+
+`(unattributed)` is always included, so the parts add up to the run total rather
+than telling a partial story that looks complete. A breakdown with a single bucket
+is left out of the text report — one row would just repeat the total — and a long
+one collapses its tail (`... 3 more`). `report().by_tag` / `.by_tool` return
+`AttributionSummary` objects, `guard.to_json()` carries both lists, and
+`guard.tracker.by_tool()` gives you the same numbers mid-run.
+
+---
+
 ## Command line
 
 ```bash

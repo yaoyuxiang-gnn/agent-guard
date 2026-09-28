@@ -17,9 +17,13 @@ from typing import Any
 from ._util import format_duration, format_percent, format_tokens, format_usd
 from .loop import LoopVerdict
 from .pricing import PRICING_AS_OF
-from .tracker import ModelSummary, Usage
+from .tracker import AttributionSummary, ModelSummary, Usage
 
 __all__ = ["LimitStatus", "Report", "supports_unicode"]
+
+#: Most rows an attribution breakdown prints before it collapses the tail. These
+#: sections answer "where did the money go?"; the JSON has the whole list.
+_ATTRIBUTION_ROWS = 5
 
 
 _UNICODE_PROBE = "█░│─"
@@ -130,6 +134,8 @@ class Report:
     cost_usd: float
     limits: tuple[LimitStatus, ...] = ()
     by_model: tuple[ModelSummary, ...] = ()
+    by_tag: tuple[AttributionSummary, ...] = ()
+    by_tool: tuple[AttributionSummary, ...] = ()
     unpriced_models: tuple[str, ...] = ()
     unpriced_calls: int = 0
     trip: LoopVerdict | None = None
@@ -191,6 +197,9 @@ class Report:
                     f" / {format_tokens(summary.output_tokens)} out"
                 )
 
+        lines.extend(self._attribution_lines("by tag", self.by_tag, ascii_only=ascii_only))
+        lines.extend(self._attribution_lines("by tool", self.by_tool, ascii_only=ascii_only))
+
         if self.unpriced_calls:
             lines.append("")
             lines.append(
@@ -222,6 +231,30 @@ class Report:
     def __str__(self) -> str:
         return self.render()
 
+    def _attribution_lines(
+        self, title: str, summaries: tuple[AttributionSummary, ...], *, ascii_only: bool
+    ) -> list[str]:
+        """Render one attribution breakdown, or nothing when it says nothing.
+
+        A single bucket is just the run total said twice, so the section appears
+        only once there are at least two — the noise budget the roadmap asked for.
+        """
+        if len(summaries) < 2:
+            return []
+        shown, hidden = summaries[:_ATTRIBUTION_ROWS], summaries[_ATTRIBUTION_ROWS:]
+        name_width = min(22, max(len(s.name) for s in shown))
+        lines = ["", f"  {title}"]
+        for summary in shown:
+            calls = f"{summary.calls} call" + ("s" if summary.calls != 1 else "")
+            cost = "unpriced" if summary.unpriced_calls else format_usd(summary.cost_usd)
+            lines.append(f"    {summary.name:<{name_width}}  {calls:>8}  {cost:>10}")
+        if hidden:
+            rest = sum(s.cost_usd for s in hidden)
+            lines.append(
+                f"    {f'... {len(hidden)} more':<{name_width}}  {'':>8}  {format_usd(rest):>10}"
+            )
+        return lines
+
     # -- machine -------------------------------------------------------------
 
     def as_dict(self) -> dict[str, Any]:
@@ -235,6 +268,8 @@ class Report:
             "usage": self.usage.as_dict(),
             "limits": [s.as_dict() for s in self.limits],
             "by_model": [s.as_dict() for s in self.by_model],
+            "by_tag": [s.as_dict() for s in self.by_tag],
+            "by_tool": [s.as_dict() for s in self.by_tool],
             "unpriced_calls": self.unpriced_calls,
             "unpriced_models": list(self.unpriced_models),
             "trip": self.trip.as_dict() if self.trip else None,
@@ -286,6 +321,19 @@ class Report:
             for item in data.get("by_model") or ()
         )
 
+        def attribution(key: str) -> tuple[AttributionSummary, ...]:
+            return tuple(
+                AttributionSummary(
+                    name=str(item["name"]),
+                    calls=int(item["calls"]),
+                    input_tokens=int(item["input_tokens"]),
+                    output_tokens=int(item["output_tokens"]),
+                    cost_usd=float(item["cost_usd"]),
+                    unpriced_calls=int(item.get("unpriced_calls", 0)),
+                )
+                for item in data.get(key) or ()
+            )
+
         trip_data = data.get("trip")
         trip = (
             LoopVerdict(
@@ -308,6 +356,8 @@ class Report:
             cost_usd=float(data.get("cost_usd", 0.0)),
             limits=limits,
             by_model=by_model,
+            by_tag=attribution("by_tag"),
+            by_tool=attribution("by_tool"),
             unpriced_models=tuple(data.get("unpriced_models") or ()),
             unpriced_calls=int(data.get("unpriced_calls", 0)),
             trip=trip,

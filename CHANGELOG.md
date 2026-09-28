@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cost attribution by step tag and by tool.** The tracker recorded `tag` and
+  `step` on every call but never aggregated them, so "which tool is eating my
+  budget?" meant summing `guard.tracker.records` by hand. `report().by_tag` and
+  `report().by_tool` now answer it, a wrapped call made inside
+  `with guard.tool("search", ...)` is attributed to that tool automatically
+  (innermost block wins, and an explicit `record(tool=...)` overrides it), and the
+  text report prints both breakdowns — but only when there are at least two
+  buckets, since one row would just repeat the run total. Calls that carried no tag
+  or no tool land under `UNATTRIBUTED`, so the parts always add up to the whole
+  instead of a breakdown that looks complete and is not. Also in `to_json()`, in
+  `CostTracker.as_dict()`, and as `CostTracker.by_tag()` / `.by_tool()` mid-run.
 - **User pricing config: your own models, your own prices.** The bundled table is
   a snapshot of public list prices, which is never enough — a fine-tune, a gateway
   alias, a negotiated rate. `Guard` now reads a JSON config file automatically, so

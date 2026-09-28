@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import unittest
 import warnings
 from types import SimpleNamespace as NS
 
 from agentguard import GuardConfigError, Price, PriceTable, Usage
-from agentguard.tracker import CostTracker, extract_model, extract_usage
+from agentguard.tracker import UNATTRIBUTED, CostTracker, extract_model, extract_usage
 
 
 def openai_response(
@@ -226,6 +227,81 @@ class CostTrackerTests(unittest.TestCase):
         self.assertEqual(data["usage"]["total_tokens"], 15)
         self.assertEqual(len(data["records"]), 1)
         self.assertEqual(len(data["by_model"]), 1)
+        self.assertEqual(len(data["by_tag"]), 1)
+        self.assertEqual(len(data["by_tool"]), 1)
+
+
+class AttributionTests(unittest.TestCase):
+    """Cost attributed to a step tag, and to the tool it was spent inside."""
+
+    def setUp(self) -> None:
+        self.tracker = CostTracker(on_unknown_model="ignore")
+
+    def record(self, *, tag: str | None = None, tool: str | None = None, million: float = 1.0):
+        return self.tracker.record(
+            model="gpt-4o",
+            usage=Usage(int(1_000_000 * million), 0),
+            elapsed_s=0.0,
+            tag=tag,
+            tool=tool,
+        )
+
+    def test_by_tag_sums_dollars_per_tag(self) -> None:
+        self.record(tag="search")
+        self.record(tag="search", million=0.5)
+        self.record(tag="summarise")
+        by_tag = self.tracker.by_tag()
+        self.assertAlmostEqual(by_tag["search"].cost_usd, 2.50 + 1.25)
+        self.assertEqual(by_tag["search"].calls, 2)
+        self.assertAlmostEqual(by_tag["summarise"].cost_usd, 2.50)
+
+    def test_by_tag_is_ordered_by_descending_cost(self) -> None:
+        self.record(tag="cheap", million=0.1)
+        self.record(tag="pricey")
+        self.assertEqual(list(self.tracker.by_tag()), ["pricey", "cheap"])
+
+    def test_untagged_calls_are_visible_rather_than_implied(self) -> None:
+        # The parts have to add up to the whole, or "by tag" is a partial story
+        # that looks complete.
+        self.record(tag="search")
+        self.record()
+        by_tag = self.tracker.by_tag()
+        self.assertIn(UNATTRIBUTED, by_tag)
+        self.assertEqual(by_tag[UNATTRIBUTED].calls, 1)
+        self.assertAlmostEqual(sum(s.cost_usd for s in by_tag.values()), self.tracker.total_usd)
+
+    def test_by_tool_attributes_the_call_to_the_open_tool(self) -> None:
+        self.record(tool="fetch")
+        self.record(tool="search", million=0.25)
+        self.record()
+        by_tool = self.tracker.by_tool()
+        self.assertAlmostEqual(by_tool["fetch"].cost_usd, 2.50)
+        self.assertAlmostEqual(by_tool["search"].cost_usd, 0.625)
+        self.assertEqual(by_tool[UNATTRIBUTED].calls, 1)
+
+    def test_unpriced_calls_are_counted_in_their_bucket(self) -> None:
+        self.record(tag="search")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.tracker.record(model="mystery", usage=Usage(10, 10), elapsed_s=0.0, tag="search")
+        summary = self.tracker.by_tag()["search"]
+        self.assertEqual((summary.calls, summary.unpriced_calls), (2, 1))
+        self.assertAlmostEqual(summary.cost_usd, 2.50)
+
+    def test_a_record_carries_its_tool(self) -> None:
+        record = self.record(tool="fetch")
+        self.assertEqual(record.tool, "fetch")
+        self.assertEqual(record.as_dict()["tool"], "fetch")
+
+    def test_attribution_of_an_empty_tracker_is_empty(self) -> None:
+        self.assertEqual(self.tracker.by_tag(), {})
+        self.assertEqual(self.tracker.by_tool(), {})
+
+    def test_summary_dicts_are_serialisable(self) -> None:
+        self.record(tag="search")
+        payload = self.tracker.by_tag()["search"].as_dict()
+        self.assertEqual(payload["name"], "search")
+        self.assertEqual(json.loads(json.dumps(payload))["calls"], 1)
 
     def test_price_table_property(self) -> None:
         self.assertIsInstance(self.tracker.price_table, PriceTable)

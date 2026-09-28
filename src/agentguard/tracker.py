@@ -12,7 +12,7 @@ from __future__ import annotations
 import threading
 import time
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,10 +22,16 @@ __all__ = [
     "Usage",
     "CallRecord",
     "ModelSummary",
+    "AttributionSummary",
     "CostTracker",
+    "UNATTRIBUTED",
     "extract_usage",
     "extract_model",
 ]
+
+#: Bucket name for calls that carried no tag (or no tool). Kept as one literal so
+#: the parts of an attribution breakdown always add up to the whole.
+UNATTRIBUTED = "(unattributed)"
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +200,7 @@ class CallRecord:
     elapsed_s: float
     tag: str | None = None
     step: int | None = None
+    tool: str | None = None
     meta: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -210,6 +217,7 @@ class CallRecord:
             "priced": self.priced,
             "tag": self.tag,
             "step": self.step,
+            "tool": self.tool,
             "elapsed_s": round(self.elapsed_s, 6),
             **self.usage.as_dict(),
         }
@@ -229,6 +237,33 @@ class ModelSummary:
     def as_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
+            "calls": self.calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cost_usd": round(self.cost_usd, 8),
+            "unpriced_calls": self.unpriced_calls,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AttributionSummary:
+    """Aggregated spend for one tag or one tool.
+
+    ``name`` is the step's ``tag=`` or the name passed to ``with guard.tool(...)``,
+    or :data:`UNATTRIBUTED` for calls that had neither — so the parts always add up
+    to the whole, and money nobody labelled is visible rather than implied.
+    """
+
+    name: str
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    unpriced_calls: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
             "calls": self.calls,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
@@ -300,6 +335,7 @@ class CostTracker:
         elapsed_s: float = 0.0,
         tag: str | None = None,
         step: int | None = None,
+        tool: str | None = None,
         meta: Mapping[str, Any] | None = None,
         price: Price | None = None,
     ) -> CallRecord:
@@ -328,6 +364,7 @@ class CostTracker:
                 elapsed_s=elapsed_s,
                 tag=tag,
                 step=step,
+                tool=tool,
                 meta=dict(meta) if meta else {},
             )
             self._records.append(record)
@@ -416,12 +453,76 @@ class CostTracker:
 
     def by_model(self) -> dict[str, ModelSummary]:
         """Per-model totals, ordered by descending cost then name."""
+        buckets = self._buckets(lambda record: record.canonical_model or record.model)
+        summaries = [
+            ModelSummary(
+                model=name,
+                calls=values["calls"],
+                input_tokens=values["input_tokens"],
+                output_tokens=values["output_tokens"],
+                cost_usd=values["cost_usd"],
+                unpriced_calls=values["unpriced_calls"],
+            )
+            for name, values in buckets.items()
+        ]
+        summaries.sort(key=lambda s: (-s.cost_usd, s.model))
+        return {s.model: s for s in summaries}
+
+    def by_tag(self) -> dict[str, AttributionSummary]:
+        """Per-tag totals, ordered by descending cost then name.
+
+        The tag is the free-form label a step was opened with
+        (``guard.step(tag="search")``) — the answer to "which part of my agent is
+        eating the budget?". Calls recorded outside any tagged step land under
+        :data:`UNATTRIBUTED`, so the breakdown still adds up to the total.
+
+        >>> tracker = CostTracker(on_unknown_model="ignore")
+        >>> _ = tracker.record(model="gpt-4o", usage=Usage(1_000_000, 0), tag="search")
+        >>> _ = tracker.record(model="gpt-4o", usage=Usage(1_000_000, 0), tag="write")
+        >>> {name: round(s.cost_usd, 2) for name, s in tracker.by_tag().items()}
+        {'search': 2.5, 'write': 2.5}
+        """
+        return self._attribution(lambda record: record.tag)
+
+    def by_tool(self) -> dict[str, AttributionSummary]:
+        """Per-tool totals, ordered by descending cost then name.
+
+        A call is attributed to the tool whose ``with guard.tool(...)`` block it was
+        made in, which is what makes "which tool is eating my budget?" answerable
+        without summing records by hand.
+
+        >>> tracker = CostTracker(on_unknown_model="ignore")
+        >>> _ = tracker.record(model="gpt-4o", usage=Usage(1_000_000, 0), tool="search")
+        >>> round(tracker.by_tool()["search"].cost_usd, 2)
+        2.5
+        """
+        return self._attribution(lambda record: record.tool)
+
+    def _attribution(
+        self, key_of: Callable[[CallRecord], str | None]
+    ) -> dict[str, AttributionSummary]:
+        buckets = self._buckets(lambda record: key_of(record) or UNATTRIBUTED)
+        summaries = [
+            AttributionSummary(
+                name=name,
+                calls=values["calls"],
+                input_tokens=values["input_tokens"],
+                output_tokens=values["output_tokens"],
+                cost_usd=values["cost_usd"],
+                unpriced_calls=values["unpriced_calls"],
+            )
+            for name, values in buckets.items()
+        ]
+        summaries.sort(key=lambda s: (-s.cost_usd, s.name))
+        return {s.name: s for s in summaries}
+
+    def _buckets(self, key_of: Callable[[CallRecord], str]) -> dict[str, dict[str, Any]]:
+        """Group records by an arbitrary key, summing calls, tokens and dollars."""
         buckets: dict[str, dict[str, Any]] = {}
         with self._lock:
             for record in self._records:
-                key = record.canonical_model or record.model
                 bucket = buckets.setdefault(
-                    key,
+                    key_of(record),
                     {
                         "calls": 0,
                         "input_tokens": 0,
@@ -436,20 +537,7 @@ class CostTracker:
                 bucket["cost_usd"] += record.cost_usd or 0.0
                 if not record.priced:
                     bucket["unpriced_calls"] += 1
-
-        summaries = [
-            ModelSummary(
-                model=name,
-                calls=values["calls"],
-                input_tokens=values["input_tokens"],
-                output_tokens=values["output_tokens"],
-                cost_usd=values["cost_usd"],
-                unpriced_calls=values["unpriced_calls"],
-            )
-            for name, values in buckets.items()
-        ]
-        summaries.sort(key=lambda s: (-s.cost_usd, s.model))
-        return {s.model: s for s in summaries}
+        return buckets
 
     def burn_rate_usd_per_step(self) -> float | None:
         """Average dollars spent per accounted call, or ``None`` if no calls."""
@@ -468,5 +556,7 @@ class CostTracker:
                 "cost_usd": round(sum(r.cost_usd or 0.0 for r in self._records), 8),
                 "usage": self.usage.as_dict(),
                 "by_model": [s.as_dict() for s in self.by_model().values()],
+                "by_tag": [s.as_dict() for s in self.by_tag().values()],
+                "by_tool": [s.as_dict() for s in self.by_tool().values()],
                 "records": [r.as_dict() for r in self._records],
             }
