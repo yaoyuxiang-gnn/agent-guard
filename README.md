@@ -10,14 +10,14 @@ Zero dependencies. No provider SDK. No server. No telemetry.
 [![CI](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agent-budget-guard-py.svg)](https://pypi.org/project/agent-budget-guard-py/)
 [![Python versions](https://img.shields.io/pypi/pyversions/agent-budget-guard-py.svg)](https://pypi.org/project/agent-budget-guard-py/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/LICENSE)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#design-principles)
 
-[English](README.md) · [简体中文](README.zh-CN.md)
+[English](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/README.md) · [简体中文](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/README.zh-CN.md)
 
 <br>
 
-<img src="docs/demo.svg" width="591" alt="A terminal running examples/basic.py: an agent with a $0.05 budget is stopped on its third call, and the report shows the budget bar at 114%.">
+<img src="https://raw.githubusercontent.com/yaoyuxiang-gnn/agent-guard/main/docs/demo.svg" width="591" alt="A terminal running examples/basic.py: an agent with a $0.05 budget is stopped on its third call, and the report shows the budget bar at 114%.">
 
 </div>
 
@@ -537,7 +537,7 @@ Being explicit about scope is cheaper than a GitHub issue.
 - **Not a proxy.** It does not sit between you and your provider, and it cannot see
   traffic it was not told about.
 - **Not a tokenizer.** Bundled prices are an indicative snapshot
-  ([`PRICING_AS_OF`](src/agentguard/pricing.py)). Verify anything you bill on, and
+  ([`PRICING_AS_OF`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/src/agentguard/pricing.py)). Verify anything you bill on, and
   configure what matters — in a file, or in code:
   ```bash
   agentguard config set my-finetune-v3 3 12
@@ -564,15 +564,15 @@ Being explicit about scope is cheaper than a GitHub issue.
 
 | | |
 |---|---|
-| [`examples/basic.py`](examples/basic.py) | Budget cap, start to finish |
-| [`examples/loop_detection.py`](examples/loop_detection.py) | All four detectors, plus a healthy run that must not trip |
-| [`examples/wrapped_client.py`](examples/wrapped_client.py) | Zero-touch recording, and pre-flight refusal |
-| [`examples/streaming.py`](examples/streaming.py) | Recording a streamed response, once, on drain |
-| [`examples/langgraph_demo.py`](examples/langgraph_demo.py) | LangGraph callbacks: cost accounting plus tool-loop detection |
-| [`examples/report_demo.py`](examples/report_demo.py) | A realistic multi-model run report |
-| [`examples/custom_models.py`](examples/custom_models.py) | Custom models, prices, aliases and disabled entries |
-| [ROADMAP.md](ROADMAP.md) | What is planned next |
-| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [`examples/basic.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/basic.py) | Budget cap, start to finish |
+| [`examples/loop_detection.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/loop_detection.py) | All four detectors, plus a healthy run that must not trip |
+| [`examples/wrapped_client.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/wrapped_client.py) | Zero-touch recording, and pre-flight refusal |
+| [`examples/streaming.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/streaming.py) | Recording a streamed response, once, on drain |
+| [`examples/langgraph_demo.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/langgraph_demo.py) | LangGraph callbacks: cost accounting plus tool-loop detection |
+| [`examples/report_demo.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/report_demo.py) | A realistic multi-model run report |
+| [`examples/custom_models.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/custom_models.py) | Custom models, prices, aliases and disabled entries |
+| [ROADMAP.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md) | What is planned next |
+| [CHANGELOG.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CHANGELOG.md) | Release history |
 
 Every docstring example in the package runs as a test, so the documentation cannot
 drift from the behaviour.
@@ -590,10 +590,10 @@ pytest --cov=agentguard                     # if you prefer pytest
 python examples/basic.py
 ```
 
-473 tests, no network, no fixtures to download. See [CONTRIBUTING.md](CONTRIBUTING.md).
+473 tests, no network, no fixtures to download. See [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md).
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/LICENSE).

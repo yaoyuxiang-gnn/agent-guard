@@ -143,7 +143,31 @@ special-casing the adapter — every provider benefits.
 - Tests must not touch the network. Use the fake clients in `tests/` as a model.
 - Time is injected, never slept on: pass `clock=` a fake to `Guard`.
 - The suite runs under both `unittest` and `pytest`, on Python 3.10–3.13 and on
-  Linux, macOS and Windows. Avoid platform-specific assumptions in tests.
+  Linux, macOS and Windows. Avoid platform-specific assumptions in tests. A test
+  that passes here and fails on macOS is usually a path, not a behaviour: the
+  temporary directory is reached through `/var`, a symlink to `/private/var`, so
+  `os.getcwd()` spells it differently than `tempfile` does. Compare paths with
+  `Path.resolve()` (or `assert_same_file` in `tests/test_cli.py`), never as strings.
+
+## The READMEs, and where they are rendered
+
+`README.md` is the package description on PyPI as well as the repository front page,
+and PyPI does not resolve relative paths: a link to `CONTRIBUTING.md` or an image at
+`docs/demo.svg` is a 404 there. **Every link and image in `README.md` is therefore an
+absolute URL**, and the hero image points at `raw.githubusercontent.com`, which serves
+SVG with the right content type. `README.zh-CN.md` is only ever rendered by GitHub and
+keeps relative links, which survive a repository rename.
+
+Two assets are generated from real program output and go stale when the report
+format changes:
+
+```bash
+make demo      # docs/demo.svg, from examples/basic.py
+make social    # docs/social-preview.png, needs Pillow
+```
+
+Regenerate them in the same change that alters what a report prints, or the README
+shows a screenshot of a program that no longer exists.
 
 ## Commit and pull request conventions
 
