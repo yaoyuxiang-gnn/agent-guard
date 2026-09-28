@@ -1,0 +1,85 @@
+name: Bug report
+description: Something behaved differently from what the documentation says.
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two things make a bug here much faster to fix:
+
+        1. **The guard report.** `print(guard.report())` in the failing run tells us
+           the limits, the models, whether anything was unpriced, and how the trip
+           was classified.
+        2. **The loop verdict, if one fired.** `exc.kind` and `exc.detail` say which
+           detector fired and why.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did agent-guard do, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: |
+        A standalone script is ideal. Please do not paste API keys — the examples
+        in this repository all run offline against fake clients, and a fake client
+        is usually enough to reproduce a guard bug.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: Guard report
+      description: Output of `print(guard.report())`, if a guard was involved.
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem is it?
+      options:
+        - A limit did not fire when it should have
+        - A limit fired when it should not have (false positive)
+        - A loop detector false positive
+        - A loop detector false negative
+        - Cost or token accounting is wrong
+        - Report or CLI output is wrong
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: agent-guard version
+      description: "`python -c \"import agent_guard; print(agent_guard.__version__)\"`"
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version and OS
+      placeholder: "3.12.1 on Windows 11"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md).
+          required: true

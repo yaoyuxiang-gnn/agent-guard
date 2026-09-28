@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest a capability, a detector, or an integration.
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        agent-guard is deliberately small: zero dependencies, no I/O, no server.
+        Proposals that respect those constraints are the easiest to accept.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        Describe the failure you want to prevent, not the API you want. "My agent
+        spends $12 retrying the same HTTP call" is more useful than "add a
+        RetryDetector class".
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What are you doing today instead?
+      description: |
+        If you already solved this by subclassing `Detector` or writing a wrapper,
+        paste it. A working workaround is strong evidence the feature belongs in
+        the library — or that it does not and the docs just need an example.
+      render: python
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - A new loop detector
+        - A new limit (cost, tokens, steps, time, something else)
+        - A provider or framework adapter
+        - Reporting or CLI
+        - Pricing table
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This can be implemented with the standard library only.
+          required: false
+        - label: I am willing to open a pull request for it.
+          required: false

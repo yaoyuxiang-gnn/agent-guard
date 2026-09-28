@@ -1,0 +1,12 @@
+# Keep the GitHub Actions used by this repository current. agent-guard itself has
+# no dependencies, so there is nothing else to update.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies

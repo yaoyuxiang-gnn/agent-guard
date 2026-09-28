@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test · ${{ matrix.os }} · py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Deliberately no `pip install`. agent-guard has zero runtime and zero test
+      # dependencies, so the suite must pass on a bare interpreter. If this step
+      # ever needs an install, the zero-dependency promise has been broken.
+      - name: Run the test suite on the standard library alone
+        run: python -m unittest discover -s tests -t .
+
+      - name: Run every example
+        run: |
+          python examples/basic.py
+          python examples/loop_detection.py
+          python examples/wrapped_client.py
+          python examples/report_demo.py
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test tooling
+        run: python -m pip install --upgrade pip pytest pytest-cov
+
+      # Proves the suite is pytest-compatible as well as unittest-compatible.
+      - name: Run under pytest
+        run: pytest --cov=agent_guard --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  build:
+    name: build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+
+      - name: Check the metadata
+        run: python -m twine check dist/*
+
+      - name: Install the wheel and smoke-test it
+        run: |
+          python -m pip install dist/*.whl
+          cd /tmp
+          python -c "import agent_guard; print(agent_guard.__version__)"
+          agent-guard --version
+          agent-guard pricing gpt-4o
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
