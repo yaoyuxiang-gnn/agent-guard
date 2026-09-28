@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **User pricing config: your own models, your own prices.** The bundled table is
+  a snapshot of public list prices, which is never enough — a fine-tune, a gateway
+  alias, a negotiated rate. `Guard` now reads a JSON config file automatically, so
+  none of that needs a code change:
+
+  ```bash
+  agentguard config set my-finetune-v3 3 12 --cached 0.3
+  agentguard config alias acme/fast claude-3-5-haiku
+  agentguard config disable gpt-4
+  ```
+
+  The file has three keys: `models` (a price as `{"input": 3.0, "output": 12.0,
+  "cached_input": 0.3}`, a `[input, output]` array, or a `Price`), `aliases`
+  (matched against the reported model string exactly, before any normalization) and
+  `disable` (drop a bundled price you do not trust — the model becomes *unpriced*,
+  so it is reported and excluded from the budget instead of billed at a number you
+  rejected). Discovery order: `$AGENTGUARD_CONFIG` (an explicit path, or
+  `none`/`off`/`0` to switch config off entirely), then `agentguard.json` /
+  `.agentguard.json` in the working directory or nearest parent, then
+  `%APPDATA%\agentguard\pricing.json` (`$XDG_CONFIG_HOME/...` elsewhere). Files
+  merge, with the more specific one winning on a conflict.
+  New: `agentguard.config` (`PricingConfig`, `load_config`, `parse_config`,
+  `config_paths`, and the editing helpers the CLI uses), `PriceTable.from_config`,
+  `PriceTable.origin` / `aliases` / `disabled` / `sources`, `Guard(use_config=,
+  config_path=, config=, aliases=, disable=)`, `Guard.price_table`,
+  `Guard.pricing_config`, and `Report.pricing_sources` so a saved report names the
+  config that priced it.
+- **`agentguard config` CLI.** `path`, `init`, `set`, `alias`, `remove`, `disable`,
+  `enable` and `list`, with `--user` / `--project` / `--file` to choose the file.
+  `agentguard pricing` now shows the *effective* table — bundled plus configured —
+  with a `source` column (`builtin` / `config`), the aliases, the disabled models
+  and the config files in play; `--no-config` shows the bundled table alone and
+  `--json` emits the lot for tooling.
+- **`pricing=` accepts mappings.** `Guard(pricing={"m": {"input": 3, "output": 12,
+  "cached": 0.3}})` — the long field names from `Price`'s `repr()` work too — and
+  `Price.as_dict()` returns them.
+- **`examples/custom_models.py`**, plus a "Your own models and prices" section in
+  both READMEs.
 - **Streaming usage capture.** A wrapped client's `create(..., stream=True)` now
   returns a `GuardedStream` that passes chunks through untouched and records the
   call once, when the stream is drained; abandoning a stream records whatever
@@ -28,12 +66,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Impossible prices are rejected at construction.** A negative, `NaN` or infinite
+  rate (or a `bool`, which `float()` would happily turn into `0.0`/`1.0`) used to be
+  accepted. A `NaN` rate was the dangerous one: `NaN > budget` is false, so every
+  budget check silently became a no-op. `Price` now validates its three rates, and
+  pricing overrides accept mappings as well as tuples.
 - **Shared guard entered concurrently no longer crashes.** `Guard.__enter__` kept
   its `ContextVar` tokens in one list on the instance, so two threads (or two
   asyncio tasks) inside `with guard:` at the same time popped each other's token
   and `__exit__` raised `ValueError: Token was created in a different Context`.
   The entry stack is now context-local, which also makes `@guarded(guard=shared)`
   safe on a thread pool.
+- **`agentguard pricing <unknown>` suggestion had unbalanced braces.** The
+  copy-paste hint printed `Guard(pricing={{'model': ...})`; it now prints valid
+  Python, and a regression test pins the exact string.
 
 ## [0.1.0] - 2026-09-28
 

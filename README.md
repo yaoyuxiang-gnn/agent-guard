@@ -99,7 +99,8 @@ agent-guard  nightly-indexer
 
   ! 1 call(s) had no known price and are excluded from the budget:
       acme-rerank-v3
-    Pass Guard(pricing={...}) to include them.
+    Price them with `agentguard config set <model> <input> <output>`,
+    or pass Guard(pricing={...}) in code.
 
 ----------------------------------------------------------------
   prices as of 2026-01 (indicative only)
@@ -107,7 +108,12 @@ agent-guard  nightly-indexer
 
 Note the last block. **agent-guard never guesses a price.** A model it does not
 know is counted as *unpriced* and reported loudly, because a safety tool that
-silently assumes `$0.00` is worse than no safety tool at all.
+silently assumes `$0.00` is worse than no safety tool at all — and pricing that
+model is one command away:
+
+```bash
+agentguard config set acme-rerank-v3 0.50 1.50
+```
 
 ---
 
@@ -324,13 +330,105 @@ Pass `guard=` an existing guard when spend should accumulate across calls.
 
 ---
 
+## Your own models and prices
+
+The bundled table knows public list prices. It cannot know your fine-tune, your
+gateway's aliases, a regional endpoint, or a rate you negotiated. Those go in a
+JSON file that `Guard` picks up automatically — no code change, no fork:
+
+```bash
+$ agentguard config set my-finetune-v3 3 12 --cached 0.3
+$ agentguard config alias acme/fast claude-3-5-haiku
+$ agentguard config disable gpt-4          # do not trust this bundled price
+```
+
+```json
+{
+  "version": 1,
+  "models": {
+    "my-finetune-v3": {"input": 3.0, "output": 12.0, "cached_input": 0.3},
+    "acme-local-7b": [0.05, 0.08],
+    "gpt-4o": [2.0, 8.0]
+  },
+  "aliases": {"acme/fast": "claude-3-5-haiku"},
+  "disable": ["gpt-4"]
+}
+```
+
+| key | answers |
+|---|---|
+| `models` | *What does this model cost?* USD per 1M tokens, as an object or a short `[input, output]` array. A name that matches a bundled model **reprices** it. |
+| `aliases` | *What is this name really?* Matched against the reported model string exactly, before any other interpretation — so `acme/fast` can point at a model that has a price. |
+| `disable` | *Which bundled prices do I not trust?* A disabled model becomes **unpriced**: counted, reported, and excluded from the budget rather than billed at a number you rejected. |
+
+The file is found in this order, first match wins:
+
+1. `$AGENTGUARD_CONFIG` — an explicit path (`none`/`off`/`0` disables config entirely)
+2. `agentguard.json` or `.agentguard.json` in the working directory or the nearest parent
+3. `%APPDATA%\agentguard\pricing.json` on Windows, `$XDG_CONFIG_HOME/agentguard/pricing.json` (default `~/.config/...`) elsewhere
+
+Everything is overridable in code too, and code always wins over the file:
+
+```python
+from agentguard import Guard, Price
+
+guard = Guard(
+    max_usd=5.0,
+    pricing={"my-finetune-v3": Price(3.00, 12.00)},   # or (3.00, 12.00), or {...}
+    aliases={"internal-llm": "acme-local-7b"},
+    disable=["gpt-4"],
+    use_config=False,                                 # ignore the file entirely
+)
+```
+
+Inspect what is actually in effect before trusting a number:
+
+```bash
+$ agentguard pricing
+41 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-01)
+
+  model                        input    output    cached  source
+  claude-3-5-haiku              $0.8        $4     $0.08  builtin
+  claude-3-5-sonnet               $3       $15      $0.3  builtin
+  ...
+  gpt-4o                          $2        $8         -  config
+  my-finetune-v3                  $3       $12      $0.3  config
+  ...
+
+  aliases
+    acme/fast -> claude-3-5-haiku
+
+  disabled
+    gpt-4
+
+  config: ~/.config/agentguard/pricing.json
+```
+
+The `source` column is the point: `builtin` means the bundled snapshot, `config`
+means your file decided it. `agentguard config list` shows what each file
+contains, `agentguard config path` shows which file is being read and why, and a
+config typo — an unknown key, a negative or `NaN` rate, an alias pointing at a
+model with no price, a `disable` entry that matches nothing — raises
+`GuardConfigError` **at construction**, naming the file. A misconfigured price
+must never quietly change what a budget means.
+
+---
+
 ## Command line
 
 ```bash
 $ agentguard report run.json          # render a report saved by guard.save(...)
 $ agentguard report run.json --json
 $ agentguard pricing gpt-4o
-$ agentguard pricing | head
+$ agentguard pricing                 # effective table, with a source per model
+$ agentguard pricing --no-config     # bundled prices only
+$ agentguard config path             # where config is read from
+$ agentguard config init             # write a starter file
+$ agentguard config set NAME IN OUT [--cached C]
+$ agentguard config alias NAME TARGET
+$ agentguard config remove NAME
+$ agentguard config disable NAME     # / agentguard config enable NAME
+$ agentguard config list
 ```
 
 ```
@@ -345,6 +443,8 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
     1M in + 1M out            $12.5
     100k in + 20k out         $0.45
     10k in + 2k out          $0.045
+
+  source   builtin
 ```
 
 `guard.save("run.json")` in the worker, `agentguard report run.json` in CI. The
@@ -389,7 +489,10 @@ Being explicit about scope is cheaper than a GitHub issue.
   traffic it was not told about.
 - **Not a tokenizer.** Bundled prices are an indicative snapshot
   ([`PRICING_AS_OF`](src/agentguard/pricing.py)). Verify anything you bill on, and
-  override what matters:
+  configure what matters — in a file, or in code:
+  ```bash
+  agentguard config set my-finetune-v3 3 12
+  ```
   ```python
   Guard(pricing={"my-finetune-v3": Price(3.00, 12.00)})
   ```
@@ -418,6 +521,7 @@ Being explicit about scope is cheaper than a GitHub issue.
 | [`examples/streaming.py`](examples/streaming.py) | Recording a streamed response, once, on drain |
 | [`examples/langgraph_demo.py`](examples/langgraph_demo.py) | LangGraph callbacks: cost accounting plus tool-loop detection |
 | [`examples/report_demo.py`](examples/report_demo.py) | A realistic multi-model run report |
+| [`examples/custom_models.py`](examples/custom_models.py) | Custom models, prices, aliases and disabled entries |
 | [ROADMAP.md](ROADMAP.md) | What is planned next |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
@@ -437,7 +541,7 @@ pytest --cov=agentguard                     # if you prefer pytest
 python examples/basic.py
 ```
 
-291 tests, no network, no fixtures to download. See [CONTRIBUTING.md](CONTRIBUTING.md).
+425 tests, no network, no fixtures to download. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

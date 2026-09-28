@@ -144,6 +144,49 @@ class ModelResolutionTests(unittest.TestCase):
         self.assertIsNone(self.table.resolve_price(""))
 
 
+class PriceValidationTests(unittest.TestCase):
+    """A price is money: an impossible one must fail where it was written.
+
+    A ``NaN`` rate is the dangerous case. ``NaN > budget`` is false, so a single
+    bad number would turn every budget check into a no-op — a guard that silently
+    stops guarding.
+    """
+
+    def test_negative_rates_are_rejected(self) -> None:
+        for bad in (-0.01, -1.0):
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                Price(bad, 1.0)
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                Price(1.0, bad)
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                Price(1.0, 1.0, bad)
+
+    def test_non_finite_rates_are_rejected(self) -> None:
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                Price(bad, 1.0)
+
+    def test_booleans_and_strings_are_not_rates(self) -> None:
+        for bad in (True, "2.50", None):
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                Price(bad, 1.0)  # type: ignore[arg-type]
+
+    def test_zero_is_a_legitimate_price(self) -> None:
+        self.assertEqual(Price(0.0, 0.0).cost_usd(input_tokens=1_000_000), 0.0)
+
+    def test_integers_are_coerced_to_floats(self) -> None:
+        price = Price(3, 12)
+        self.assertIsInstance(price.input_per_1m, float)
+        self.assertEqual(price, Price(3.0, 12.0))
+
+    def test_as_dict_matches_the_config_key_names(self) -> None:
+        self.assertEqual(
+            Price(1.0, 2.0, 0.5).as_dict(),
+            {"input_per_1m": 1.0, "output_per_1m": 2.0, "cached_input_per_1m": 0.5},
+        )
+        self.assertIsNone(Price(1.0, 2.0).as_dict()["cached_input_per_1m"])
+
+
 class PriceTableOverrideTests(unittest.TestCase):
     def test_price_instance_override(self) -> None:
         table = PriceTable(overrides={"mine": Price(1.0, 2.0)})
@@ -162,6 +205,24 @@ class PriceTableOverrideTests(unittest.TestCase):
         assert price is not None
         self.assertEqual(price.cached_input_per_1m, 0.5)
 
+    def test_mapping_override(self) -> None:
+        table = PriceTable(overrides={"mine": {"input": 1.0, "output": 2.0, "cached": 0.5}})
+        self.assertEqual(table.resolve_price("mine"), Price(1.0, 2.0, 0.5))
+
+    def test_mapping_override_accepts_the_field_names_from_repr(self) -> None:
+        table = PriceTable(overrides={"mine": {"input_per_1m": 1.0, "output_per_1m": 2.0}})
+        self.assertEqual(table.resolve_price("mine"), Price(1.0, 2.0))
+
+    def test_mapping_override_needs_both_directions(self) -> None:
+        with self.assertRaises(GuardConfigError) as caught:
+            PriceTable(overrides={"mine": {"input": 1.0}})
+        self.assertIn("output", str(caught.exception))
+
+    def test_mapping_override_rejects_unknown_and_duplicate_keys(self) -> None:
+        for bad in ({"in": 1.0, "output": 2.0}, {"input": 1, "input_per_1m": 1, "output": 2}):
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                PriceTable(overrides={"mine": bad})
+
     def test_override_keys_are_normalized(self) -> None:
         table = PriceTable(overrides={"OpenAI/My-Model": (1.0, 2.0)})
         self.assertIsNotNone(table.resolve_price("my-model"))
@@ -179,6 +240,11 @@ class PriceTableOverrideTests(unittest.TestCase):
         with self.assertRaises(GuardConfigError):
             PriceTable(overrides={"m": ("a", "b")})  # type: ignore[dict-item]
 
+    def test_impossible_override_rates_raise(self) -> None:
+        for bad in ((-1.0, 2.0), (float("nan"), 2.0), (1.0, float("inf"))):
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                PriceTable(overrides={"m": bad})
+
     def test_empty_override_name_raises(self) -> None:
         with self.assertRaises(GuardConfigError):
             PriceTable(overrides={"": (1.0, 2.0)})
@@ -192,6 +258,166 @@ class PriceTableOverrideTests(unittest.TestCase):
         table = PriceTable()
         self.assertEqual(len(table), len(DEFAULT_PRICING))
         self.assertEqual(len(list(iter(table))), len(DEFAULT_PRICING))
+
+
+class AliasTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.table = PriceTable(aliases={"acme/fast": "claude-3-5-haiku"})
+
+    def test_alias_resolves_to_the_target_price(self) -> None:
+        resolved = self.table.resolve("acme/fast")
+        assert resolved is not None
+        self.assertEqual(resolved[0], "claude-3-5-haiku")
+        self.assertEqual(resolved[1], DEFAULT_PRICING["claude-3-5-haiku"])
+
+    def test_alias_matching_ignores_case_and_surrounding_space(self) -> None:
+        self.assertIsNotNone(self.table.resolve("  ACME/Fast "))
+
+    def test_alias_is_matched_before_normalization(self) -> None:
+        # "acme/gpt-4o" normalizes to "gpt-4o"; the alias must still win, which is
+        # the whole point of naming a gateway model explicitly.
+        table = PriceTable(aliases={"acme/gpt-4o": "claude-3-5-haiku"})
+        resolved = table.resolve("acme/gpt-4o")
+        assert resolved is not None
+        self.assertEqual(resolved[0], "claude-3-5-haiku")
+
+    def test_alias_may_point_at_a_dated_variant(self) -> None:
+        table = PriceTable(aliases={"legacy": "gpt-4o-2024-08-06"})
+        resolved = table.resolve("legacy")
+        assert resolved is not None
+        self.assertEqual(resolved[0], "gpt-4o")
+
+    def test_alias_chains_resolve(self) -> None:
+        table = PriceTable(
+            overrides={"mine": (1.0, 2.0)},
+            aliases={"proxy": "fast", "fast": "mine"},
+        )
+        resolved = table.resolve("proxy")
+        assert resolved is not None
+        self.assertEqual(resolved[0], "mine")
+
+    def test_alias_cycles_are_rejected(self) -> None:
+        with self.assertRaises(GuardConfigError) as caught:
+            PriceTable(aliases={"a": "b", "b": "a"})
+        self.assertIn("cycle", str(caught.exception))
+
+    def test_alias_to_a_model_with_no_price_is_rejected(self) -> None:
+        with self.assertRaises(GuardConfigError) as caught:
+            PriceTable(aliases={"a": "not-a-model"})
+        self.assertIn("no price", str(caught.exception))
+
+    def test_alias_name_cannot_also_carry_a_price(self) -> None:
+        with self.assertRaises(GuardConfigError) as caught:
+            PriceTable(overrides={"mine": (1.0, 2.0)}, aliases={"mine": "gpt-4o"})
+        self.assertIn("both a price and an alias", str(caught.exception))
+
+    def test_alias_needs_a_non_empty_target(self) -> None:
+        for bad in ("", "   ", None):
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                PriceTable(aliases={"a": bad})  # type: ignore[dict-item]
+
+    def test_alias_of_reports_the_target(self) -> None:
+        self.assertEqual(self.table.alias_of("ACME/FAST"), "claude-3-5-haiku")
+        self.assertIsNone(self.table.alias_of("gpt-4o"))
+
+    def test_aliases_property_is_a_copy(self) -> None:
+        aliases = self.table.aliases
+        aliases["sneaky"] = "gpt-4o"
+        self.assertIsNone(self.table.alias_of("sneaky"))
+
+    def test_get_ignores_aliases(self) -> None:
+        self.assertIsNone(self.table.get("acme/fast"))
+        self.assertIsNotNone(self.table.resolve_price("acme/fast"))
+
+
+class DisableTests(unittest.TestCase):
+    def test_a_disabled_model_has_no_price(self) -> None:
+        table = PriceTable(disable=["gpt-4"])
+        self.assertIsNone(table.resolve_price("gpt-4"))
+        self.assertNotIn("gpt-4", table)
+
+    def test_a_disabled_family_takes_its_dated_variants_with_it(self) -> None:
+        table = PriceTable(disable=["gpt-4o"])
+        self.assertIsNone(table.resolve_price("gpt-4o-2024-08-06"))
+
+    def test_disabling_an_unbundled_model_is_an_error(self) -> None:
+        with self.assertRaises(GuardConfigError) as caught:
+            PriceTable(disable=["my-own-model"])
+        self.assertIn("cannot disable", str(caught.exception))
+
+    def test_disabled_names_are_normalized(self) -> None:
+        self.assertEqual(PriceTable(disable=["OpenAI/GPT-4o"]).disabled, frozenset({"gpt-4o"}))
+
+    def test_an_explicit_override_beats_a_disable(self) -> None:
+        # Disable means "I do not trust the *bundled* price", not "never price this".
+        table = PriceTable(overrides={"gpt-4": (1.0, 2.0)}, disable=["gpt-4"])
+        self.assertEqual(table.resolve_price("gpt-4"), Price(1.0, 2.0))
+
+    def test_disabling_shrinks_the_table(self) -> None:
+        self.assertEqual(len(PriceTable(disable=["gpt-4"])), len(DEFAULT_PRICING) - 1)
+
+
+class OriginTests(unittest.TestCase):
+    def test_bundled_prices_are_marked_builtin(self) -> None:
+        self.assertEqual(PriceTable().origin("gpt-4o"), "builtin")
+
+    def test_overrides_are_marked_override(self) -> None:
+        self.assertEqual(PriceTable(overrides={"mine": (1.0, 2.0)}).origin("mine"), "override")
+
+    def test_unknown_and_disabled_models_have_no_origin(self) -> None:
+        table = PriceTable(disable=["gpt-4"])
+        self.assertIsNone(table.origin("who-knows"))
+        self.assertIsNone(table.origin("gpt-4"))
+
+    def test_an_alias_reports_the_origin_of_the_price_it_found(self) -> None:
+        table = PriceTable(overrides={"mine": (1.0, 2.0)}, aliases={"fast": "mine"})
+        self.assertEqual(table.origin("fast"), "override")
+
+
+class FromConfigTests(unittest.TestCase):
+    """`from_config` is where file, code and bundle are stitched together."""
+
+    def config(self, **document: object):
+        from agentguard.config import parse_config
+
+        return parse_config(document)
+
+    def test_config_models_are_marked_config(self) -> None:
+        table = PriceTable.from_config(self.config(models={"mine": [1.0, 2.0]}))
+        self.assertEqual(table.origin("mine"), "config")
+        self.assertEqual(table.resolve_price("mine"), Price(1.0, 2.0))
+
+    def test_code_overrides_beat_config_models(self) -> None:
+        table = PriceTable.from_config(
+            self.config(models={"mine": [1.0, 2.0]}), overrides={"mine": (3.0, 4.0)}
+        )
+        self.assertEqual(table.origin("mine"), "override")
+
+    def test_config_can_reprice_a_bundled_model(self) -> None:
+        table = PriceTable.from_config(self.config(models={"gpt-4o": [1.0, 1.0]}))
+        self.assertEqual(table.origin("gpt-4o"), "config")
+
+    def test_config_aliases_and_disables_are_applied(self) -> None:
+        table = PriceTable.from_config(
+            self.config(aliases={"fast": "gpt-4o-mini"}, disable=["gpt-4"])
+        )
+        self.assertIsNone(table.resolve_price("gpt-4"))
+        resolved = table.resolve("fast")
+        assert resolved is not None
+        self.assertEqual(resolved[0], "gpt-4o-mini")
+
+    def test_none_builds_the_plain_bundled_table(self) -> None:
+        table = PriceTable.from_config(None)
+        self.assertEqual(len(table), len(DEFAULT_PRICING))
+        self.assertEqual(table.sources, ())
+
+    def test_sources_come_from_the_config(self) -> None:
+        from pathlib import Path
+
+        from agentguard.config import parse_config
+
+        config = parse_config({"models": {"mine": [1.0, 2.0]}}, source=Path("x.json"))
+        self.assertEqual(PriceTable.from_config(config).sources, (Path("x.json"),))
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -357,8 +357,9 @@ class CostTracker:
             else:
                 message = (
                     f"agentguard has no price for model {model!r}; its cost is excluded "
-                    f"from the budget and counted as unpriced. Add a pricing override to "
-                    f"include it."
+                    f"from the budget and counted as unpriced. Add it with "
+                    f"`agentguard config set {model} <input> <output>`, a pricing "
+                    f"override, or a default_price=."
                 )
             warnings.warn(message, RuntimeWarning, stacklevel=3)
 

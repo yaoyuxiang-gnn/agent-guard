@@ -58,6 +58,13 @@ refuses to make.
 Likely shape: an explicit, opt-in `agentguard pricing --update` that writes a local
 cache file, with the bundled table always the fallback. Never automatic.
 
+*Partly shipped.* The user-facing half — price a model agent-guard has never heard
+of, reprice one it has, alias a gateway name, disable a bundled price you do not
+trust — landed as the JSON config file (`agentguard config set ...`, see the
+README). A downloaded snapshot would be just another entry in the same merge chain,
+so the remaining work is the fetch itself: opt-in, checksummed, and written to the
+user config directory rather than imported over the network.
+
 ### Additional detectors, if they earn their place
 
 Candidates, none of them committed:

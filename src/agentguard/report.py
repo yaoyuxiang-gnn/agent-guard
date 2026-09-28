@@ -135,6 +135,8 @@ class Report:
     trip: LoopVerdict | None = None
     tripped_reason: str | None = None
     pricing_as_of: str = PRICING_AS_OF
+    pricing_sources: tuple[str, ...] = ()
+    """User config files the prices came from, so a report is auditable."""
 
     # -- text ----------------------------------------------------------------
 
@@ -197,7 +199,10 @@ class Report:
             )
             for model in self.unpriced_models:
                 lines.append(f"      {model}")
-            lines.append("    Pass Guard(pricing={...}) to include them.")
+            lines.append(
+                "    Price them with `agentguard config set <model> <input> <output>`,\n"
+                "    or pass Guard(pricing={...}) in code."
+            )
 
         if self.trip is not None:
             lines.append("")
@@ -209,6 +214,9 @@ class Report:
         lines.append("")
         lines.append(rule)
         lines.append(f"  prices as of {self.pricing_as_of} (indicative only)")
+        if self.pricing_sources:
+            for source in self.pricing_sources:
+                lines.append(f"  pricing config: {source}")
         return "\n".join(lines)
 
     def __str__(self) -> str:
@@ -232,6 +240,7 @@ class Report:
             "trip": self.trip.as_dict() if self.trip else None,
             "tripped_reason": self.tripped_reason,
             "pricing_as_of": self.pricing_as_of,
+            "pricing_sources": list(self.pricing_sources),
         }
 
     @classmethod
@@ -304,6 +313,7 @@ class Report:
             trip=trip,
             tripped_reason=data.get("tripped_reason"),
             pricing_as_of=str(data.get("pricing_as_of", PRICING_AS_OF)),
+            pricing_sources=tuple(str(item) for item in data.get("pricing_sources") or ()),
         )
 
 

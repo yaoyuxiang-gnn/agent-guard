@@ -22,6 +22,13 @@ Quick start::
     finally:
         print(guard.report())
 
+Prices come from a bundled snapshot, and anything it cannot know — your
+fine-tune, your gateway alias, a rate you negotiated — comes from a JSON config
+file that :class:`Guard` picks up automatically::
+
+    agentguard config set my-finetune-v3 --input 3 --output 12
+    agentguard config alias acme/fast claude-3-5-haiku
+
 The public surface is deliberately small: one class, one decorator, one exception
 base, and a handful of value types.
 """
@@ -29,6 +36,18 @@ base, and a handful of value types.
 from __future__ import annotations
 
 from ._version import __version__
+from .config import (
+    CONFIG_ENV_VAR,
+    PricingConfig,
+    config_paths,
+    initialize_config,
+    load_config,
+    parse_config,
+    remove_entry,
+    set_alias,
+    set_disabled,
+    set_model_price,
+)
 from .decorators import guarded
 from .exceptions import (
     BudgetExceeded,
@@ -88,6 +107,17 @@ __all__ = [
     "PriceTable",
     "DEFAULT_PRICING",
     "PRICING_AS_OF",
+    # pricing config
+    "PricingConfig",
+    "CONFIG_ENV_VAR",
+    "load_config",
+    "parse_config",
+    "config_paths",
+    "initialize_config",
+    "set_model_price",
+    "set_alias",
+    "set_disabled",
+    "remove_entry",
     # reporting
     "Report",
     "LimitStatus",

@@ -40,6 +40,7 @@ from types import TracebackType
 from typing import Any, Literal
 
 from ._util import stable_json
+from .config import PricingConfig, load_config
 from .exceptions import (
     BudgetExceeded,
     GuardConfigError,
@@ -179,9 +180,21 @@ class Guard:
         the trip exception; ``"warn"`` emits a :class:`RuntimeWarning` and keeps
         going; ``"stop"`` sets :attr:`stopped` and calls ``on_trip_callback``
         without raising, for loops that prefer to break out themselves.
-    :param pricing: Extra or overriding prices, as ``{model: Price}`` or
-        ``{model: (input_per_1m, output_per_1m)}``.
-    :param price_table: A prebuilt :class:`~agentguard.PriceTable` to use instead.
+    :param pricing: Extra or overriding prices, as ``{model: Price}``,
+        ``{model: (input_per_1m, output_per_1m)}`` or
+        ``{model: {"input": .., "output": ..}}``.
+    :param aliases: Names your provider reports that should resolve to another
+        model, as ``{reported_name: priced_name}``.
+    :param disable: Bundled model names to drop, so they count as *unpriced*
+        instead of being billed at a price you do not trust.
+    :param price_table: A prebuilt :class:`~agentguard.PriceTable` to use instead
+        of building one. Config discovery is skipped when this is passed.
+    :param use_config: Read the user's ``agentguard.json`` /
+        ``$AGENTGUARD_CONFIG`` pricing config (default ``True``). Set ``False`` to
+        use only the bundled table and this constructor's arguments.
+    :param config_path: Load exactly this config file instead of discovering one.
+    :param config: A prebuilt :class:`~agentguard.PricingConfig`, bypassing
+        discovery. ``Guard(pricing=...)`` still wins over anything from a file.
     :param default_price: Price to assume for models with no entry. When omitted,
         unknown models are counted as *unpriced* rather than guessed.
     :param on_unknown_model: ``"warn"`` (default), ``"error"`` or ``"ignore"``.
@@ -208,6 +221,7 @@ class Guard:
         "_on_trip",
         "_on_trip_callback",
         "_on_unknown_model",
+        "_pricing_config",
         "_progress_monitor",
         "_steps",
         "_tracker",
@@ -225,8 +239,13 @@ class Guard:
         on_trip: str = "raise",
         on_trip_callback: Callable[[GuardTripped], None] | None = None,
         name: str | None = None,
-        pricing: Mapping[str, Price | tuple[float, ...]] | None = None,
+        pricing: Mapping[str, Price | tuple[float, ...] | Mapping[str, Any]] | None = None,
+        aliases: Mapping[str, str] | None = None,
+        disable: Sequence[str] = (),
         price_table: PriceTable | None = None,
+        use_config: bool = True,
+        config_path: str | Path | None = None,
+        config: PricingConfig | None = None,
         default_price: Price | None = None,
         on_unknown_model: str = "warn",
         loop_detection: bool = True,
@@ -258,7 +277,20 @@ class Guard:
         self._tripped: GuardTripped | None = None
         self._warned_empty = False
 
-        table = price_table if price_table is not None else PriceTable(overrides=pricing)
+        if price_table is not None:
+            # A prebuilt table is the caller's complete answer to "what do things
+            # cost?", so config discovery is skipped rather than silently merged
+            # underneath it.
+            table = price_table
+            self._pricing_config = PricingConfig(sources=price_table.sources)
+        else:
+            self._pricing_config = self._load_pricing_config(config, config_path, use_config)
+            table = PriceTable.from_config(
+                self._pricing_config,
+                overrides=pricing,
+                aliases=aliases,
+                disable=disable,
+            )
         self._tracker = CostTracker(
             table,
             default_price=default_price,
@@ -279,6 +311,26 @@ class Guard:
             )
 
     # -- lifecycle -----------------------------------------------------------
+
+    @staticmethod
+    def _load_pricing_config(
+        config: PricingConfig | None,
+        config_path: str | Path | None,
+        use_config: bool,
+    ) -> PricingConfig:
+        """Pick the pricing config: explicit object, explicit path, or discovery.
+
+        An explicitly passed ``config`` wins over everything, an explicit
+        ``config_path`` is loaded exactly as given (a missing file is an error,
+        not an empty config), and discovery is what ``use_config=True`` means.
+        """
+        if config is not None:
+            return config
+        if config_path is not None:
+            return load_config(config_path)
+        if not use_config:
+            return PricingConfig()
+        return load_config()
 
     def __enter__(self) -> Guard:
         _entry_tokens.set((*_entry_tokens.get(), _current_guard.set(self)))
@@ -357,6 +409,20 @@ class Guard:
     def tracker(self) -> CostTracker:
         """The underlying :class:`~agentguard.CostTracker`."""
         return self._tracker
+
+    @property
+    def price_table(self) -> PriceTable:
+        """The price lookup this guard bills with."""
+        return self._tracker.price_table
+
+    @property
+    def pricing_config(self) -> PricingConfig:
+        """The user config this guard was built from (empty when there is none).
+
+        ``guard.pricing_config.sources`` names the files that were read, which is
+        the quickest way to answer "where did this price come from?".
+        """
+        return self._pricing_config
 
     @property
     def stopped(self) -> bool:
@@ -655,6 +721,7 @@ class Guard:
             unpriced_calls=self._tracker.unpriced_calls,
             trip=trip_verdict,
             tripped_reason=tripped_reason,
+            pricing_sources=tuple(str(source) for source in self._pricing_config.sources),
         )
 
     def as_dict(self) -> dict[str, Any]:

@@ -93,10 +93,15 @@ agent-guard  nightly-indexer
 
   ! 1 call(s) had no known price and are excluded from the budget:
       acme-rerank-v3
-    Pass Guard(pricing={...}) to include them.
+    Price them with `agentguard config set <model> <input> <output>`,
+    or pass Guard(pricing={...}) in code.
 ```
 
-请特别注意最后一段。**agent-guard 从不猜测价格。** 它不认识的模型会被标记为 *unpriced* 并大声报出来——因为一个默默按 `$0.00` 计算的"安全工具"，比没有安全工具更危险。
+请特别注意最后一段。**agent-guard 从不猜测价格。** 它不认识的模型会被标记为 *unpriced* 并大声报出来——因为一个默默按 `$0.00` 计算的"安全工具"，比没有安全工具更危险。而给它配上价格只需要一条命令：
+
+```bash
+agentguard config set acme-rerank-v3 0.50 1.50
+```
 
 ---
 
@@ -296,13 +301,97 @@ def summarise(url: str) -> str:
 
 ---
 
+## 自定义模型与价格
+
+内置表只知道公开的 list price。你的微调模型、网关别名、区域端点、谈下来的折扣价，它都不可能知道。这些写进一个 JSON 配置文件，`Guard` 会自动读取——不用改代码，也不用 fork：
+
+```bash
+$ agentguard config set my-finetune-v3 3 12 --cached 0.3
+$ agentguard config alias acme/fast claude-3-5-haiku
+$ agentguard config disable gpt-4          # 这条内置价格我不信
+```
+
+```json
+{
+  "version": 1,
+  "models": {
+    "my-finetune-v3": {"input": 3.0, "output": 12.0, "cached_input": 0.3},
+    "acme-local-7b": [0.05, 0.08],
+    "gpt-4o": [2.0, 8.0]
+  },
+  "aliases": {"acme/fast": "claude-3-5-haiku"},
+  "disable": ["gpt-4"]
+}
+```
+
+| 键 | 回答的问题 |
+|---|---|
+| `models` | *这个模型多少钱？* 单位是 USD / 1M tokens，写成对象或简短的 `[input, output]` 数组。名字与某个内置模型相同时，就是**给它重新定价**。 |
+| `aliases` | *这个名字到底是什么？* 按上报的模型名精确匹配（不区分大小写），且在其他任何解析之前生效——所以 `acme/fast` 可以指向一个有价格的模型。 |
+| `disable` | *哪些内置价格我不信？* 被禁用的模型变成 **unpriced**：照常计数、照常上报、但不计入预算，而不是按一个你已经否定的数字计费。 |
+
+文件按以下顺序查找，先命中者生效：
+
+1. `$AGENTGUARD_CONFIG` —— 显式路径（设为 `none` / `off` / `0` 则完全关闭配置）
+2. 当前目录或最近的上级目录里的 `agentguard.json` 或 `.agentguard.json`
+3. Windows 上是 `%APPDATA%\agentguard\pricing.json`，其他平台是 `$XDG_CONFIG_HOME/agentguard/pricing.json`（默认 `~/.config/...`）
+
+同样的东西也可以在代码里给，并且**代码始终优先于文件**：
+
+```python
+from agentguard import Guard, Price
+
+guard = Guard(
+    max_usd=5.0,
+    pricing={"my-finetune-v3": Price(3.00, 12.00)},   # 或 (3.00, 12.00)，或 {...}
+    aliases={"internal-llm": "acme-local-7b"},
+    disable=["gpt-4"],
+    use_config=False,                                 # 完全忽略配置文件
+)
+```
+
+在信任一个数字之前，先看清楚**最终生效**的是什么：
+
+```bash
+$ agentguard pricing
+41 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-01)
+
+  model                        input    output    cached  source
+  claude-3-5-haiku              $0.8        $4     $0.08  builtin
+  claude-3-5-sonnet               $3       $15      $0.3  builtin
+  ...
+  gpt-4o                          $2        $8         -  config
+  my-finetune-v3                  $3       $12      $0.3  config
+  ...
+
+  aliases
+    acme/fast -> claude-3-5-haiku
+
+  disabled
+    gpt-4
+
+  config: ~/.config/agentguard/pricing.json
+```
+
+`source` 这一列是关键：`builtin` 表示来自内置快照，`config` 表示这个价格是你的文件定的。`agentguard config list` 展示每个文件里到底写了什么，`agentguard config path` 告诉你正在读哪个文件、为什么是它。而配置里的任何笔误——未知的键、负数或 `NaN` 费率、指向没有价格的模型的别名、匹配不到任何东西的 `disable` 条目——都会在**构造时**抛 `GuardConfigError` 并指出文件名。一个配错的价格，绝不该悄悄改变预算的含义。
+
+---
+
 ## 命令行
 
 ```bash
 $ agentguard report run.json          # 渲染 guard.save(...) 存下的报告
 $ agentguard report run.json --json
 $ agentguard pricing gpt-4o
-$ agentguard pricing | head
+$ agentguard pricing                 # 生效表，每个模型标注来源
+$ agentguard pricing --no-config     # 只看内置价格
+$ agentguard config path             # 配置从哪里读
+$ agentguard config init             # 生成一个起始文件
+$ agentguard config set NAME IN OUT [--cached C]
+$ agentguard config alias NAME TARGET
+$ agentguard config remove NAME
+$ agentguard config disable NAME     # 以及 agentguard config enable NAME
+$ agentguard config list
 ```
 
 ```
@@ -317,6 +406,8 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
     1M in + 1M out            $12.5
     100k in + 20k out         $0.45
     10k in + 2k out          $0.045
+
+  source   builtin
 ```
 
 在 worker 里 `guard.save("run.json")`，在 CI 里 `agentguard report run.json`。读取方不需要在业务依赖里装 agent-guard。
@@ -345,7 +436,10 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
 
 - **不是可观测性平台。** 什么都不往外发。没有服务端、没有界面、没有账号、没有后台线程。
 - **不是代理。** 它不夹在你和厂商之间，也看不到没被告知的流量。
-- **不是分词器。** 内置价格只是一份指示性快照（见 [`PRICING_AS_OF`](src/agentguard/pricing.py)）。要用来出账的数字请自行核实，并在需要时覆盖：
+- **不是分词器。** 内置价格只是一份指示性快照（见 [`PRICING_AS_OF`](src/agentguard/pricing.py)）。要用来出账的数字请自行核实，并在需要时配置——写进文件，或写在代码里：
+  ```bash
+  agentguard config set my-finetune-v3 3 12
+  ```
   ```python
   Guard(pricing={"my-finetune-v3": Price(3.00, 12.00)})
   ```
@@ -369,6 +463,7 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
 | [`examples/streaming.py`](examples/streaming.py) | 流式响应在消费完时恰好记录一次 |
 | [`examples/langgraph_demo.py`](examples/langgraph_demo.py) | LangGraph 回调：成本记账 + 工具死循环检测 |
 | [`examples/report_demo.py`](examples/report_demo.py) | 一份真实的多模型运行报告 |
+| [`examples/custom_models.py`](examples/custom_models.py) | 自定义模型、价格、别名与禁用内置条目 |
 | [ROADMAP.md](ROADMAP.md) | 后续计划 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
 
@@ -387,7 +482,7 @@ pytest --cov=agentguard                     # 如果你更喜欢 pytest
 python examples/basic.py
 ```
 
-291 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+425 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

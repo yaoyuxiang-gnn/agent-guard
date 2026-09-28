@@ -31,6 +31,7 @@ examples:  ## Run every example end to end
 	PYTHONPATH=src python examples/loop_detection.py
 	PYTHONPATH=src python examples/wrapped_client.py
 	PYTHONPATH=src python examples/report_demo.py
+	PYTHONPATH=src python examples/custom_models.py
 
 demo:  ## Regenerate docs/demo.svg from the real output of examples/basic.py
 	python tools/make_demo_svg.py

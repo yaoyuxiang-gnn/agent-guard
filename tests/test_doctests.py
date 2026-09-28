@@ -25,6 +25,7 @@ _MODULE_NAMES = (
     "agentguard.adapters.anthropic",
     "agentguard.adapters.openai",
     "agentguard.cli",
+    "agentguard.config",
     "agentguard.decorators",
     "agentguard.exceptions",
     "agentguard.guard",
