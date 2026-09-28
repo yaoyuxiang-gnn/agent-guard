@@ -9,28 +9,25 @@ zero dependencies, no I/O, never guess a number, fail at construction.
 
 ---
 
-## Next (0.2)
+## Next (0.3)
 
-### Per-tag and per-tool cost attribution
+### ~~Per-tag and per-tool cost attribution~~ — shipped
 
-The tracker already records `tag` and `step` on every call but does not aggregate
-by them. The ask is a report that answers "which tool is eating my budget?"
-directly, instead of forcing you to sum `guard.tracker.records` yourself.
+`report().by_tag` and `report().by_tool` answer "which tool is eating my budget?"
+directly. A call made inside `with guard.tool("search", ...)` is attributed to that
+tool automatically, calls that carried neither a tag nor a tool land under
+`UNATTRIBUTED` so the parts always add up, and the text report prints a breakdown
+only when it has at least two buckets — one row would just repeat the run total,
+which was the part of this item that actually needed deciding. See "Where the money
+went" in the README.
 
-```python
-guard.report().by_tag()     # {"search": 0.41, "summarise": 0.88, ...}
-```
+### ~~`on_trip="stop"` ergonomics~~ — shipped
 
-Interface not settled. Aggregation is trivial; deciding what belongs in the text
-report without making it noisy is the actual work.
-
-### `on_trip="stop"` ergonomics
-
-`"stop"` currently requires the caller to write `while not guard.stopped:`. That is
-easy to get wrong, and getting it wrong means an agent keeps running after the
-budget is gone. Worth exploring whether `guard.step()` should raise a dedicated
-`GuardStopped` once stopped, so the loop unwinds without any caller discipline —
-while still allowing cleanup.
+`"stop"` records the trip, calls `on_trip_callback`, lets the current step finish so
+a caller can clean up — and then raises `GuardStopped` from every entry point, so a
+loop that never checks `guard.stopped` stops instead of spending on. The trip it
+carries as `cause` keeps `except GuardTripped` handlers working, and accounting still
+happens before the exception, because a call that already went out is real money.
 
 ### ~~Anthropic and OpenAI streaming helpers~~ — shipped
 
@@ -42,11 +39,14 @@ clients are covered the same way. See `examples/streaming.py`.
 
 An agent that checkpoints its own state should be able to checkpoint its spend too,
 so a resumed run does not start with a fresh budget. Requires a serialisable
-counter form; the record list is too heavy for the purpose.
+counter form; the record list is too heavy for the purpose. The open questions are
+what a restored report can honestly claim (per-model totals, but not the records),
+and whether detector windows should survive a checkpoint — a loop that spans one is
+exactly the kind that costs money.
 
 ---
 
-## Later (0.3+)
+## Later (0.4+)
 
 ### A price table that can be refreshed without a release
 
