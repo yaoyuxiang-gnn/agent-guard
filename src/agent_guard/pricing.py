@@ -27,8 +27,8 @@ turn token counts into dollars with no network call and no vendor SDK.
 from __future__ import annotations
 
 import re
+from collections.abc import ItemsView, Iterator, Mapping
 from dataclasses import dataclass
-from typing import ItemsView, Iterator, Mapping
 
 from .exceptions import GuardConfigError
 

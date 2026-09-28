@@ -70,7 +70,7 @@ def format_duration(seconds: float | None) -> str:
         return f"{seconds * 1000:.0f}ms"
     if seconds < 60:
         return f"{seconds:.1f}s"
-    minutes, rest = divmod(int(round(seconds)), 60)
+    minutes, rest = divmod(round(seconds), 60)
     hours, minutes = divmod(minutes, 60)
     if hours:
         return f"{hours}h {minutes:02d}m"
@@ -110,7 +110,7 @@ def _fallback(obj: Any) -> str:
         if callable(method):
             try:
                 return stable_json(method())
-            except Exception:  # noqa: BLE001 - best effort only
+            except Exception:  # best effort: fall through to the next candidate
                 continue
     return repr(obj)
 

@@ -33,10 +33,11 @@ import os
 import threading
 import time
 import warnings
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Callable, Iterator, Mapping, Sequence
+from typing import Any
 
 from ._util import stable_json
 from .exceptions import (
@@ -64,7 +65,7 @@ __all__ = ["Guard", "Step", "current_guard"]
 
 _ON_TRIP_MODES = ("raise", "warn", "stop")
 
-_current_guard: contextvars.ContextVar["Guard | None"] = contextvars.ContextVar(
+_current_guard: contextvars.ContextVar[Guard | None] = contextvars.ContextVar(
     "agent_guard_current", default=None
 )
 _current_step: contextvars.ContextVar[int | None] = contextvars.ContextVar(
@@ -72,7 +73,7 @@ _current_step: contextvars.ContextVar[int | None] = contextvars.ContextVar(
 )
 
 
-def current_guard() -> "Guard | None":
+def current_guard() -> Guard | None:
     """Return the guard installed by the innermost ``with guard:`` block.
 
     Useful deep inside an agent's call stack, where threading a guard parameter
@@ -105,7 +106,7 @@ class Step:
 
     __slots__ = ("_guard", "_token", "index", "tag")
 
-    def __init__(self, guard: "Guard", index: int, tag: str | None = None) -> None:
+    def __init__(self, guard: Guard, index: int, tag: str | None = None) -> None:
         self._guard = guard
         self._token: contextvars.Token[int | None] | None = None
         #: 1-based step number.
@@ -113,7 +114,7 @@ class Step:
         #: Optional free-form label, carried onto every call recorded in the step.
         self.tag = tag
 
-    def __enter__(self) -> "Step":
+    def __enter__(self) -> Step:
         self._token = _current_step.set(self.index)
         return self
 
@@ -185,24 +186,24 @@ class Guard:
     """
 
     __slots__ = (
-        "_lock",
+        "_action_monitor",
         "_clock",
         "_created_at",
-        "_steps",
-        "_name",
-        "_max_usd",
-        "_max_tokens",
-        "_max_steps",
+        "_default_price",
+        "_lock",
         "_max_seconds",
+        "_max_steps",
+        "_max_tokens",
+        "_max_usd",
+        "_name",
         "_on_trip",
         "_on_trip_callback",
         "_on_unknown_model",
-        "_default_price",
-        "_tracker",
-        "_action_monitor",
         "_progress_monitor",
-        "_tripped",
+        "_steps",
         "_tokens",
+        "_tracker",
+        "_tripped",
         "_warned_empty",
     )
 
@@ -272,7 +273,7 @@ class Guard:
 
     # -- lifecycle -----------------------------------------------------------
 
-    def __enter__(self) -> "Guard":
+    def __enter__(self) -> Guard:
         self._tokens.append(_current_guard.set(self))
         return self
 
@@ -585,7 +586,7 @@ class Guard:
         if first and self._on_trip_callback is not None:
             try:
                 self._on_trip_callback(stored)
-            except Exception:  # noqa: BLE001 - a broken callback must not mask the trip
+            except Exception:  # a broken callback must not mask the trip
                 warnings.warn(
                     "agent-guard on_trip_callback raised; the trip is still recorded",
                     RuntimeWarning,

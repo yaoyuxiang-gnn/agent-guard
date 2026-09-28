@@ -36,7 +36,14 @@ jobs:
       - name: Run the test suite on the standard library alone
         run: python -m unittest discover -s tests -t .
 
+      # The test suite bootstraps `src/` onto sys.path itself (see tests/__init__.py),
+      # but the examples are plain scripts that import the package normally. Without
+      # an explicit PYTHONPATH they fail with ModuleNotFoundError on any machine
+      # where agent-guard is not installed -- which is precisely the bare-interpreter
+      # case this job exists to prove.
       - name: Run every example
+        env:
+          PYTHONPATH: src
         run: |
           python examples/basic.py
           python examples/loop_detection.py

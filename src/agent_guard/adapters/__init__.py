@@ -24,7 +24,8 @@ and call ``guard.record(response)`` once the stream completes.
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any
 
 from .._util import stable_json
 from ..exceptions import GuardConfigError
@@ -65,7 +66,7 @@ class GuardedClient:
     2.5
     """
 
-    __slots__ = ("_target", "_guard", "_record_on", "_depth", "_preflight", "_chars_per_token")
+    __slots__ = ("_chars_per_token", "_depth", "_guard", "_preflight", "_record_on", "_target")
 
     def __init__(
         self,
@@ -126,7 +127,7 @@ class GuardedClient:
         target = object.__getattribute__(self, "_target")
         return f"GuardedClient({type(target).__name__})"
 
-    def __enter__(self) -> "GuardedClient":
+    def __enter__(self) -> GuardedClient:
         enter = getattr(object.__getattribute__(self, "_target"), "__enter__", None)
         if enter is not None:
             enter()
