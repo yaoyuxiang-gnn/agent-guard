@@ -100,6 +100,23 @@ jobs:
           agentguard --version
           agentguard pricing gpt-4o
 
+      # Zero runtime dependencies is the promise this project is built on, so
+      # enforce it rather than trusting it. Note that `requires` also reports
+      # optional extras, so filter on the environment marker instead of testing
+      # the list for emptiness -- extras are a feature, runtime deps are not.
+      - name: Assert the wheel declares no runtime dependencies
+        run: |
+          python - <<'PY'
+          import importlib.metadata as md
+          import sys
+
+          declared = md.requires("agentguard") or []
+          runtime = [req for req in declared if "extra ==" not in req]
+          if runtime:
+              sys.exit(f"runtime dependencies crept into the wheel: {runtime}")
+          print(f"zero runtime dependencies; {len(declared)} optional extras declared")
+          PY
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist
