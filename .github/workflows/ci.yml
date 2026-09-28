@@ -44,17 +44,34 @@ jobs:
       #
       # Every example is listed: one that nothing runs is documentation that has
       # already drifted. `make examples` runs the same list.
+      #
+      # Run them all rather than stopping at the first failure -- one broken example
+      # should not hide the state of the other six -- and name the culprit, because
+      # "Process completed with exit code 1" tells a maintainer nothing.
       - name: Run every example
         env:
           PYTHONPATH: src
         run: |
-          python examples/basic.py
-          python examples/loop_detection.py
-          python examples/wrapped_client.py
-          python examples/report_demo.py
-          python examples/streaming.py
-          python examples/langgraph_demo.py
-          python examples/custom_models.py
+          status=0
+          for example in \
+            examples/basic.py \
+            examples/loop_detection.py \
+            examples/wrapped_client.py \
+            examples/report_demo.py \
+            examples/streaming.py \
+            examples/langgraph_demo.py \
+            examples/custom_models.py
+          do
+            echo "::group::$example"
+            if python "$example"; then
+              echo "ok: $example"
+            else
+              echo "::error title=$example failed::$example exited non-zero"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
 
   coverage:
     name: coverage

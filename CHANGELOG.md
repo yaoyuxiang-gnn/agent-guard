@@ -169,5 +169,6 @@ distribution name carries the long form: the import and the console script are b
   and Windows.
 - 265 tests, including every docstring example.
 
-[Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/yaoyuxiang-gnn/agent-guard/releases/tag/v0.1.0
+[Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/yaoyuxiang-gnn/agent-guard/releases/tag/v0.2.0
+[0.1.0]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.1.0...v0.2.0
