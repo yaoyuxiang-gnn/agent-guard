@@ -72,12 +72,8 @@ class LimitStatusTests(unittest.TestCase):
         self.assertIn(
             "1,000", LimitStatus("tokens", 1000.0, 2000.0, "tokens").render(ascii_only=True)
         )
-        self.assertIn(
-            "12.4s", LimitStatus("time", 12.42, 60.0, "seconds").render(ascii_only=True)
-        )
-        self.assertIn(
-            " / 25", LimitStatus("steps", 8.0, 25.0, "steps").render(ascii_only=True)
-        )
+        self.assertIn("12.4s", LimitStatus("time", 12.42, 60.0, "seconds").render(ascii_only=True))
+        self.assertIn(" / 25", LimitStatus("steps", 8.0, 25.0, "steps").render(ascii_only=True))
 
     def test_as_dict(self) -> None:
         data = LimitStatus("budget", 0.5, 1.0, "usd").as_dict()
@@ -165,9 +161,7 @@ class RenderTests(unittest.TestCase):
         self.assertIn("1 call", text)
 
     def test_renders_the_unpriced_warning(self) -> None:
-        text = sample_report(unpriced_models=("mystery",), unpriced_calls=2).render(
-            ascii_only=True
-        )
+        text = sample_report(unpriced_models=("mystery",), unpriced_calls=2).render(ascii_only=True)
         self.assertIn("mystery", text)
         self.assertIn("excluded from the budget", text)
 

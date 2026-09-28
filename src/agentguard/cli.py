@@ -106,13 +106,11 @@ def _cmd_pricing(args: argparse.Namespace) -> int:
         resolved = table.resolve(args.model)
         if resolved is None:
             print(
-                f"agentguard: no bundled price for {args.model!r} "
-                f"(snapshot {PRICING_AS_OF}).",
+                f"agentguard: no bundled price for {args.model!r} (snapshot {PRICING_AS_OF}).",
                 file=sys.stderr,
             )
             print(
-                "Add it with Guard(pricing={{"
-                f"{args.model!r}: (input_per_1m, output_per_1m)}}).",
+                f"Add it with Guard(pricing={{{{{args.model!r}: (input_per_1m, output_per_1m)}}).",
                 file=sys.stderr,
             )
             return 1
@@ -140,9 +138,7 @@ def _cmd_pricing(args: argparse.Namespace) -> int:
     print(f"  {'model':<24}{'input':>10}{'output':>10}{'cached':>10}")
     for name, price in sorted(table.items()):
         cached = (
-            format_usd(price.cached_input_per_1m)
-            if price.cached_input_per_1m is not None
-            else "-"
+            format_usd(price.cached_input_per_1m) if price.cached_input_per_1m is not None else "-"
         )
         print(
             f"  {name:<24}"

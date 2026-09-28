@@ -368,11 +368,10 @@ class IntegrationDepthTests(unittest.TestCase):
 
     def test_step_tool_registers_for_loop_detection(self) -> None:
         guard = Guard()
-        with self.assertRaises(LoopDetected):
-            with guard.step() as step:
-                for _ in range(4):
-                    with step.tool("search", {"q": "same"}):
-                        pass
+        with self.assertRaises(LoopDetected), guard.step() as step:
+            for _ in range(4):
+                with step.tool("search", {"q": "same"}):
+                    pass
 
     def test_step_returns_the_signature(self) -> None:
         guard = Guard()
@@ -568,9 +567,8 @@ class StepObjectTests(unittest.TestCase):
 
     def test_step_exit_does_not_suppress_exceptions(self) -> None:
         guard = Guard()
-        with self.assertRaises(ValueError):
-            with guard.step():
-                raise ValueError("boom")
+        with self.assertRaises(ValueError), guard.step():
+            raise ValueError("boom")
 
 
 if __name__ == "__main__":  # pragma: no cover

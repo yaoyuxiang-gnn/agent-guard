@@ -78,10 +78,7 @@ def call_signature(name: str, args: Any = None, *, max_len: int = _MAX_SIGNATURE
     >>> call_signature("search", None)
     'search()'
     """
-    if args is None:
-        rendered = ""
-    else:
-        rendered = stable_json(args)
+    rendered = "" if args is None else stable_json(args)
     signature = f"{name}({rendered})"
     if max_len and len(signature) > max_len:
         signature = signature[:max_len] + f"...<{len(signature) - max_len} more chars>"
@@ -174,9 +171,7 @@ class RepeatDetector(Detector):
         if max_repeats < 2:
             raise GuardConfigError(f"max_repeats must be >= 2, got {max_repeats}")
         if window < max_repeats:
-            raise GuardConfigError(
-                f"window ({window}) must be >= max_repeats ({max_repeats})"
-            )
+            raise GuardConfigError(f"window ({window}) must be >= max_repeats ({max_repeats})")
         self.max_repeats = max_repeats
         self.window = window
         self._recent: deque[str] = deque(maxlen=window)
@@ -231,13 +226,10 @@ class CycleDetector(Detector):
     ) -> None:
         if min_cycle < 2:
             raise GuardConfigError(
-                f"min_cycle must be >= 2 (period-1 loops are RepeatDetector's job), "
-                f"got {min_cycle}"
+                f"min_cycle must be >= 2 (period-1 loops are RepeatDetector's job), got {min_cycle}"
             )
         if max_cycle < min_cycle:
-            raise GuardConfigError(
-                f"max_cycle ({max_cycle}) must be >= min_cycle ({min_cycle})"
-            )
+            raise GuardConfigError(f"max_cycle ({max_cycle}) must be >= min_cycle ({min_cycle})")
         if repeats < 2:
             raise GuardConfigError(f"repeats must be >= 2, got {repeats}")
         self.min_cycle = min_cycle

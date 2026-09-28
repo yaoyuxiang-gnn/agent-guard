@@ -96,14 +96,11 @@ class LimitStatus:
         filled, empty = ("#", ".") if ascii_only else ("█", "░")
         fraction = self.fraction
         clamped = 0.0 if fraction is None else max(0.0, min(1.0, fraction))
-        cells = int(round(clamped * bar_width))
+        cells = round(clamped * bar_width)
         bar = filled * cells + empty * (bar_width - cells)
         pair = f"{self._format(self.used)} / {self._format(self.limit)}"
         marker = "!" if self.exceeded else " "
-        return (
-            f"{marker} {self.name:<8} {pair:<26} "
-            f"{format_percent(fraction):>7}  [{bar}]"
-        )
+        return f"{marker} {self.name:<8} {pair:<26} {format_percent(fraction):>7}  [{bar}]"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -157,8 +154,7 @@ class Report:
         lines.append(("=" if ascii_only else "═") * width)
 
         lines.append(
-            f"  {'wall time':<12}{format_duration(self.elapsed_s):<16}"
-            f"{'steps':<10}{self.steps}"
+            f"  {'wall time':<12}{format_duration(self.elapsed_s):<16}{'steps':<10}{self.steps}"
         )
         lines.append(
             f"  {'llm calls':<12}{self.calls:<16}"
@@ -201,9 +197,7 @@ class Report:
             )
             for model in self.unpriced_models:
                 lines.append(f"      {model}")
-            lines.append(
-                "    Pass Guard(pricing={...}) to include them."
-            )
+            lines.append("    Pass Guard(pricing={...}) to include them.")
 
         if self.trip is not None:
             lines.append("")

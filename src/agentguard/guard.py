@@ -37,7 +37,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal
 
 from ._util import stable_json
 from .exceptions import (
@@ -123,7 +123,7 @@ class Step:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
-    ) -> bool:
+    ) -> Literal[False]:
         if self._token is not None:
             _current_step.reset(self._token)
             self._token = None
@@ -282,7 +282,7 @@ class Guard:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
-    ) -> bool:
+    ) -> Literal[False]:
         if self._tokens:
             _current_guard.reset(self._tokens.pop())
         return False
@@ -432,17 +432,22 @@ class Guard:
         # A response that reports no usage at all is the single most dangerous
         # silent failure for a budget guard: the call happens, the cap never
         # moves, and the overspend is invisible. Say so once, loudly.
-        if response is not None and usage.is_empty and input_tokens is None and output_tokens is None:
-            if not self._warned_empty:
-                self._warned_empty = True
-                warnings.warn(
-                    "agentguard could not find token usage on the recorded response; "
-                    "this call counts as $0 and will not move the budget. Pass "
-                    "input_tokens=/output_tokens= explicitly, or use "
-                    "Guard.record(...) with the counts your provider reports.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
+        if (
+            response is not None
+            and usage.is_empty
+            and input_tokens is None
+            and output_tokens is None
+            and not self._warned_empty
+        ):
+            self._warned_empty = True
+            warnings.warn(
+                "agentguard could not find token usage on the recorded response; "
+                "this call counts as $0 and will not move the budget. Pass "
+                "input_tokens=/output_tokens= explicitly, or use "
+                "Guard.record(...) with the counts your provider reports.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         record = self._tracker.record(
             model=resolved_model,

@@ -33,7 +33,12 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 
 _INPUT_KEYS = ("prompt_tokens", "input_tokens", "prompt_token_count", "input_token_count")
-_OUTPUT_KEYS = ("completion_tokens", "output_tokens", "candidates_token_count", "output_token_count")
+_OUTPUT_KEYS = (
+    "completion_tokens",
+    "output_tokens",
+    "candidates_token_count",
+    "output_token_count",
+)
 _CACHED_KEYS = (
     "cached_tokens",
     "cache_read_input_tokens",
@@ -43,7 +48,10 @@ _CACHED_KEYS = (
 _REASONING_KEYS = ("reasoning_tokens", "reasoning_token_count", "thoughts_token_count")
 
 # Nested detail objects, tried when the flat key is absent.
-_NESTED_CACHED = (("prompt_tokens_details", "cached_tokens"), ("input_tokens_details", "cached_tokens"))
+_NESTED_CACHED = (
+    ("prompt_tokens_details", "cached_tokens"),
+    ("input_tokens_details", "cached_tokens"),
+)
 _NESTED_REASONING = (
     ("completion_tokens_details", "reasoning_tokens"),
     ("output_tokens_details", "reasoning_tokens"),
@@ -272,8 +280,7 @@ class CostTracker:
     ) -> None:
         if on_unknown_model not in ("warn", "error", "ignore"):
             raise ValueError(
-                "on_unknown_model must be 'warn', 'error' or 'ignore', "
-                f"got {on_unknown_model!r}"
+                f"on_unknown_model must be 'warn', 'error' or 'ignore', got {on_unknown_model!r}"
             )
         self._lock = threading.RLock()
         self._records: list[CallRecord] = []

@@ -132,9 +132,7 @@ class CostTrackerTests(unittest.TestCase):
         self.tracker = CostTracker(on_unknown_model="ignore")
 
     def test_priced_record(self) -> None:
-        record = self.tracker.record(
-            model="gpt-4o", usage=Usage(1_000_000, 0), elapsed_s=0.0
-        )
+        record = self.tracker.record(model="gpt-4o", usage=Usage(1_000_000, 0), elapsed_s=0.0)
         self.assertTrue(record.priced)
         self.assertEqual(record.canonical_model, "gpt-4o")
         self.assertAlmostEqual(self.tracker.total_usd, 2.50)
@@ -157,17 +155,13 @@ class CostTrackerTests(unittest.TestCase):
         self.assertAlmostEqual(record.cost_usd or 0.0, 7.0)
 
     def test_default_price_covers_unknown_models(self) -> None:
-        tracker = CostTracker(
-            on_unknown_model="ignore", default_price=Price(1.0, 1.0)
-        )
+        tracker = CostTracker(on_unknown_model="ignore", default_price=Price(1.0, 1.0))
         record = tracker.record(model="whatever", usage=Usage(1_000_000, 0), elapsed_s=0.0)
         self.assertTrue(record.priced)
         self.assertAlmostEqual(tracker.total_usd, 1.0)
 
     def test_custom_table_is_used(self) -> None:
-        tracker = CostTracker(
-            PriceTable(base={"only": Price(3.0, 3.0)}), on_unknown_model="ignore"
-        )
+        tracker = CostTracker(PriceTable(base={"only": Price(3.0, 3.0)}), on_unknown_model="ignore")
         tracker.record(model="only", usage=Usage(1_000_000, 0), elapsed_s=0.0)
         self.assertAlmostEqual(tracker.total_usd, 3.0)
 

@@ -7,6 +7,7 @@ arithmetic and the conservatism of model-name resolution.
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 
 from agentguard import DEFAULT_PRICING, GuardConfigError, Price, PriceTable
@@ -88,7 +89,9 @@ class PriceArithmeticTests(unittest.TestCase):
     def test_price_is_hashable_and_frozen(self) -> None:
         price = Price(1.0, 2.0)
         self.assertEqual(hash(price), hash(Price(1.0, 2.0)))
-        with self.assertRaises(Exception):
+        # Named rather than a blind `Exception`: if the dataclass ever stops being
+        # frozen, this test must fail for that reason and not for some other one.
+        with self.assertRaises(dataclasses.FrozenInstanceError):
             price.input_per_1m = 5.0  # type: ignore[misc]
 
 

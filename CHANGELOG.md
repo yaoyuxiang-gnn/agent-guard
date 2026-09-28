@@ -58,7 +58,7 @@ everything a program prints and everything a user types.
   `$0`. Neither is ever guessed at.
 - Zero runtime dependencies, `py.typed`, Python 3.10–3.13, tested on Linux, macOS
   and Windows.
-- 264 tests, including every docstring example.
+- 265 tests, including every docstring example.
 
 [Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/yaoyuxiang-gnn/agent-guard/releases/tag/v0.1.0

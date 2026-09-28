@@ -66,9 +66,7 @@ class ProxyBehaviourTests(unittest.TestCase):
         self.proxy.chat.completions.create(model="gpt-4o")
         self.assertEqual(self.guard.calls, 1)
         # The fake reports 1,000 in / 100 out at gpt-4o list prices.
-        self.assertAlmostEqual(
-            self.guard.spent_usd, (1000 * 2.5 + 100 * 10.0) / 1_000_000
-        )
+        self.assertAlmostEqual(self.guard.spent_usd, (1000 * 2.5 + 100 * 10.0) / 1_000_000)
 
     def test_returns_the_underlying_response_untouched(self) -> None:
         response = self.proxy.chat.completions.create(model="gpt-4o")
@@ -124,7 +122,7 @@ class ProxyBehaviourTests(unittest.TestCase):
                 self.entered = False
                 self.exited = False
 
-            def __enter__(self) -> "Contextual":
+            def __enter__(self) -> Contextual:
                 self.entered = True
                 return self
 

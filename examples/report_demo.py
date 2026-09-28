@@ -28,7 +28,9 @@ def build_guard() -> Guard:
     with guard:
         for page in range(6):
             with guard.step(tag=f"chunk-{page}") as step:
-                step.record("gpt-4o", input_tokens=18_000, output_tokens=1_400, cached_input_tokens=6_000)
+                step.record(
+                    "gpt-4o", input_tokens=18_000, output_tokens=1_400, cached_input_tokens=6_000
+                )
         for page in range(6, 12):
             with guard.step(tag=f"label-{page}") as step:
                 step.record("gpt-4o-mini", input_tokens=9_000, output_tokens=700)

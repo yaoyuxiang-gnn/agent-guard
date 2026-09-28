@@ -115,9 +115,7 @@ class BudgetExceeded(GuardTripped):
                 f"(already spent {format_usd(spent_usd)})"
             )
         else:
-            detail = (
-                f"spent {format_usd(spent_usd)} of a {format_usd(limit_usd)} limit"
-            )
+            detail = f"spent {format_usd(spent_usd)} of a {format_usd(limit_usd)} limit"
         super().__init__(
             f"Budget exceeded: {detail}.",
             spent_usd=spent_usd,

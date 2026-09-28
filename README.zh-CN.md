@@ -361,7 +361,7 @@ pytest --cov=agentguard                     # 如果你更喜欢 pytest
 python examples/basic.py
 ```
 
-264 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+265 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

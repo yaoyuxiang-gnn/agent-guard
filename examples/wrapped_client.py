@@ -57,8 +57,10 @@ def main() -> None:
         print("  A post-hoc check can only report overspend. See pre-flight below.")
 
     print()
-    print("Now the same wrapper with pre-flight estimation enabled. A single huge\n"
-          "call is refused *before* it is issued, which a post-hoc check cannot do.\n")
+    print(
+        "Now the same wrapper with pre-flight estimation enabled. A single huge\n"
+        "call is refused *before* it is issued, which a post-hoc check cannot do.\n"
+    )
 
     careful = guard_openai(FakeOpenAI(), Guard(max_usd=0.05), preflight=True)
     try:

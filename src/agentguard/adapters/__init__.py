@@ -88,7 +88,10 @@ class GuardedClient:
     @property
     def guard(self) -> Guard:
         """The guard this client reports to."""
-        return object.__getattribute__(self, "_guard")
+        # Annotated rather than cast: object.__getattribute__ is typed as Any,
+        # and mypy --strict rejects returning Any from a declared Guard.
+        resolved: Guard = object.__getattribute__(self, "_guard")
+        return resolved
 
     @property
     def target(self) -> Any:
