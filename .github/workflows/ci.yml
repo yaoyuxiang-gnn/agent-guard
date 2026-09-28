@@ -48,7 +48,11 @@ jobs:
       # Run them all rather than stopping at the first failure -- one broken example
       # should not hide the state of the other six -- and name the culprit, because
       # "Process completed with exit code 1" tells a maintainer nothing.
+      #
+      # `shell: bash` is explicit on purpose: Windows runners default to PowerShell,
+      # where this loop is a syntax error. Bash is present on all three images.
       - name: Run every example
+        shell: bash
         env:
           PYTHONPATH: src
         run: |
