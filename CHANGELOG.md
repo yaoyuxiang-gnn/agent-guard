@@ -70,6 +70,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `raise_error` is set so a trip stops the run instead of being logged away.
 - **`agentguard[langgraph]` extra.**
 
+### Changed
+
+- **`on_trip="stop"` now actually stops.** It used to record the trip, set
+  `guard.stopped` and rely on the caller's loop checking that flag — a loop that
+  forgot kept spending, which is the failure this library exists to prevent. The
+  trip is still recorded, `on_trip_callback` still fires once and the current step
+  is still allowed to finish, but every entry point afterwards (`step`, `record`,
+  `tool`, `observe`, `progress`, `check`, `preflight`, a wrapped client call)
+  raises the new `GuardStopped`, whose `cause` is the original trip and whose
+  `reason` mirrors it, so `except GuardTripped` handlers keep working. A stopped
+  guard also refuses a wrapped client's next call, which means it costs nothing.
+- **A call made after a trip is now recorded before the trip is raised.** In
+  `"raise"` mode, `record()` used to raise on entry when the guard had already
+  tripped, so a call that had really gone out was missing from the report — an
+  under-reported overspend. Accounting happens first now, in every mode.
+
 ### Fixed
 
 - **Impossible prices are rejected at construction.** A negative, `NaN` or infinite

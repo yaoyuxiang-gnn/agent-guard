@@ -189,22 +189,37 @@ guard = Guard(detectors=[SchemaThrashDetector()])
 
 ### Handling a trip gracefully
 
-`on_trip="raise"` (the default) raises. The other two modes let a long-running job
-stop cleanly instead of unwinding a stack:
+`on_trip="raise"` (the default) raises the moment a limit fires. `"stop"` records
+the trip, calls `on_trip_callback` and lets the current step finish, so a
+long-running job can flush, alert and clean up — and then raises `GuardStopped`
+from every entry point afterwards, so a loop that forgets to check still stops
+instead of spending on:
 
 ```python
+from agentguard import Guard, GuardStopped
+
 guard = Guard(max_usd=5.00, on_trip="stop", on_trip_callback=alert_page)
 
-while not guard.stopped:
-    with guard.step():
-        ...
+try:
+    while True:
+        with guard.step():
+            ...
+except GuardStopped as exc:
+    log.warning("stopped by %s: %s", exc.cause.reason, exc.cause)
+finally:
+    print(guard.report())
 ```
 
 | Mode | Behaviour |
 |---|---|
-| `"raise"` | Raise the trip exception (default) |
+| `"raise"` | Raise the trip exception at the moment it fires (default) |
 | `"warn"` | Emit a `RuntimeWarning`, set `guard.stopped`, keep going — useful to *measure* before you enforce |
-| `"stop"` | Set `guard.stopped` and call `on_trip_callback`, without raising |
+| `"stop"` | Record the trip, finish the current step, then raise `GuardStopped` from the next `step()` / `record()` / `tool()` / `check()` / `preflight()` |
+
+`GuardStopped` is a `GuardTripped` whose `cause` is the original trip, so
+`except GuardTripped` still catches both a budget overrun and a loop. Accounting is
+never skipped to raise: a call that already went out is recorded, then the
+exception surfaces, because an unrecorded call is spent money the report denies.
 
 ---
 

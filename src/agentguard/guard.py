@@ -44,6 +44,7 @@ from .config import PricingConfig, load_config
 from .exceptions import (
     BudgetExceeded,
     GuardConfigError,
+    GuardStopped,
     GuardTripped,
     LoopDetected,
     StepLimitExceeded,
@@ -177,9 +178,12 @@ class Guard:
     :param max_steps: Stop once this many steps have been opened.
     :param max_seconds: Stop once this much wall-clock time has elapsed.
     :param on_trip: What to do when a limit fires. ``"raise"`` (default) raises
-        the trip exception; ``"warn"`` emits a :class:`RuntimeWarning` and keeps
-        going; ``"stop"`` sets :attr:`stopped` and calls ``on_trip_callback``
-        without raising, for loops that prefer to break out themselves.
+        the trip exception at that moment; ``"warn"`` emits a
+        :class:`RuntimeWarning` and keeps going, for measuring before enforcing;
+        ``"stop"`` records the trip, calls :paramref:`on_trip_callback` and lets
+        the current step unwind, then raises
+        :class:`~agentguard.GuardStopped` from every entry point afterwards, so a
+        loop that forgets to check :attr:`stopped` still stops.
     :param pricing: Extra or overriding prices, as ``{model: Price}``,
         ``{model: (input_per_1m, output_per_1m)}`` or
         ``{model: {"input": .., "output": ..}}``.
@@ -486,8 +490,14 @@ class Guard:
         Token counts and the model name are extracted from ``response`` when
         present; explicit keyword arguments always win, so you can supply counts
         for a provider agent-guard does not recognise.
+
+        Accounting happens *before* any trip is raised: the call already went out,
+        so its cost is real, and an exception that skipped the bookkeeping would
+        quietly remove spent money from the report. A call that *trips* a limit is
+        recorded and returns, so ``on_trip="stop"`` can finish the current step; the
+        next call is refused with :class:`~agentguard.GuardStopped`.
         """
-        self.raise_if_tripped()
+        already_stopped = self._tripped is not None
         if isinstance(response, str):
             if model is None:
                 model = response
@@ -537,6 +547,8 @@ class Guard:
             price=price,
         )
         self._evaluate()
+        if already_stopped:
+            self.raise_if_tripped()
         return record
 
     def preflight(
@@ -557,6 +569,7 @@ class Guard:
         Models with no known price return ``0.0``: agent-guard will not guess a
         rate, and the call is flagged as unpriced afterwards instead.
         """
+        self.raise_if_tripped()
         resolved = price or self._tracker.price_table.resolve_price(model)
         if resolved is None:
             resolved = self._default_price
@@ -589,6 +602,7 @@ class Guard:
 
     def observe(self, signature: str, *, step: int | None = None) -> None:
         """Feed one action signature to the loop detectors."""
+        self.raise_if_tripped()
         if not self._action_monitor:
             return
         index = step if step is not None else (_current_step.get() or self._steps)
@@ -604,8 +618,11 @@ class Guard:
                 result = search(query)
 
         The signature is computed *before* the tool runs, so a looping agent is
-        stopped before it executes the same side effect a fourth time.
+        stopped before it executes the same side effect a fourth time — and a guard
+        that has already tripped refuses to enter at all, so a stopped run cannot
+        keep performing side effects.
         """
+        self.raise_if_tripped()
         signature = call_signature(name, args)
         self.observe(signature, step=step)
         yield signature
@@ -617,6 +634,7 @@ class Guard:
 
             guard.progress(len(rows_written))   # unchanged 6 times -> trip
         """
+        self.raise_if_tripped()
         if not self._progress_monitor:
             return
         index = step if step is not None else (_current_step.get() or self._steps)
@@ -627,13 +645,37 @@ class Guard:
     # -- limits --------------------------------------------------------------
 
     def check(self) -> None:
-        """Re-evaluate every limit. Safe to call anywhere, cheap, idempotent."""
+        """Re-evaluate every limit, and raise if the guard has tripped.
+
+        Safe to call anywhere in a loop — it is cheap and does not double-count —
+        which is what makes it the natural hook for the manual integration::
+
+            while not guard.stopped:
+                ...
+                guard.check()
+
+        Under ``on_trip="raise"`` it raises the trip; under ``"stop"`` it raises
+        :class:`~agentguard.GuardStopped`; under ``"warn"`` it only warns.
+        """
         self._evaluate()
+        self.raise_if_tripped()
 
     def raise_if_tripped(self) -> None:
-        """Raise the stored trip if one exists and ``on_trip="raise"``."""
-        if self._tripped is not None and self._on_trip == "raise":
-            raise self._tripped
+        """Raise if this guard has tripped, following the ``on_trip`` mode.
+
+        ``"raise"`` re-raises the trip itself. ``"stop"`` raises
+        :class:`~agentguard.GuardStopped`, which carries the trip as
+        :attr:`~agentguard.GuardStopped.cause` — so a loop that never checks
+        :attr:`stopped` still stops, rather than quietly spending on. ``"warn"``
+        raises nothing: measuring before enforcing is the point of that mode.
+        """
+        tripped = self._tripped
+        if tripped is None:
+            return
+        if self._on_trip == "raise":
+            raise tripped
+        if self._on_trip == "stop":
+            raise GuardStopped(tripped)
 
     def _evaluate(self) -> None:
         if self._tripped is not None:
@@ -680,8 +722,9 @@ class Guard:
             raise stored
         if self._on_trip == "warn" and first:
             warnings.warn(str(stored), RuntimeWarning, stacklevel=3)
-        # "stop": the trip is recorded and `stopped` becomes True; the caller's
-        # loop is responsible for checking it and breaking out.
+        # "stop": the trip is recorded and `stopped` becomes True. The current step
+        # is allowed to finish so the caller can clean up, and every entry point
+        # afterwards raises GuardStopped -- see `raise_if_tripped`.
 
     # -- reporting -----------------------------------------------------------
 

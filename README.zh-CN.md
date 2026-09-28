@@ -173,21 +173,30 @@ guard = Guard(detectors=[SchemaThrashDetector()])
 
 ### 优雅地处理触发
 
-`on_trip="raise"`（默认）会抛异常。另外两种模式让长跑任务干净地停下来，而不是层层展开调用栈：
+`on_trip="raise"`（默认）会在限制触发的那一刻抛异常。`"stop"` 则记录触发、调用 `on_trip_callback`、让当前步骤跑完，好让长跑任务有机会落盘、告警、清理——然后从下一个入口点开始抛 `GuardStopped`。所以即使某个循环忘了检查 `guard.stopped`，它也会停下来，而不是继续烧钱：
 
 ```python
+from agentguard import Guard, GuardStopped
+
 guard = Guard(max_usd=5.00, on_trip="stop", on_trip_callback=alert_page)
 
-while not guard.stopped:
-    with guard.step():
-        ...
+try:
+    while True:
+        with guard.step():
+            ...
+except GuardStopped as exc:
+    log.warning("stopped by %s: %s", exc.cause.reason, exc.cause)
+finally:
+    print(guard.report())
 ```
 
 | 模式 | 行为 |
 |---|---|
-| `"raise"` | 抛出触发异常（默认） |
+| `"raise"` | 在触发的那一刻抛出触发异常（默认） |
 | `"warn"` | 发出 `RuntimeWarning`、设置 `guard.stopped`、继续执行——适合**先观测再强制** |
-| `"stop"` | 设置 `guard.stopped` 并调用 `on_trip_callback`，不抛异常 |
+| `"stop"` | 记录触发、让当前步骤跑完，之后从下一个 `step()` / `record()` / `tool()` / `check()` / `preflight()` 抛 `GuardStopped` |
+
+`GuardStopped` 本身是 `GuardTripped`，其 `cause` 是原始触发，所以 `except GuardTripped` 依然能同时接住预算超支和死循环。为了抛异常而跳过记账这件事绝不会发生：已经发出去的调用一定先记账，再抛异常——未记账的调用意味着报告里少了一笔真实花掉的钱。
 
 ---
 

@@ -27,6 +27,7 @@ __all__ = [
     "GuardError",
     "GuardConfigError",
     "GuardTripped",
+    "GuardStopped",
     "BudgetExceeded",
     "TokenLimitExceeded",
     "StepLimitExceeded",
@@ -78,6 +79,42 @@ class GuardTripped(GuardError):
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.message!r})"
+
+
+class GuardStopped(GuardTripped):
+    """A tripped guard refused the next piece of work, under ``on_trip="stop"``.
+
+    ``"raise"`` raises the trip itself the moment a limit fires. ``"stop"`` records
+    the trip, calls ``on_trip_callback`` and lets the current step finish, so a loop
+    can clean up — but the run is over, and every entry point afterwards
+    (:meth:`~agentguard.Guard.step`, ``record``, ``tool``, ``check``, ``preflight``,
+    a wrapped client call) raises this. That is what makes ``"stop"`` safe: a loop
+    that forgets to check ``guard.stopped`` stops anyway, instead of spending the
+    rest of the budget.
+
+    :attr:`cause` is the trip that ended the run, so a handler can still tell a
+    budget overrun from a loop::
+
+        try:
+            run_agent()
+        except GuardStopped as exc:
+            log.warning("stopped by %s: %s", exc.cause.reason, exc.cause)
+        finally:
+            print(guard.report())
+    """
+
+    reason = "stopped"
+
+    def __init__(self, cause: GuardTripped) -> None:
+        self.cause = cause
+        # Mirror the cause's reason, so ``except GuardTripped`` handlers that switch
+        # on ``reason`` keep working when a guard stops instead of raising.
+        self.reason = cause.reason
+        super().__init__(
+            f"Guard stopped: {cause}",
+            reason=cause.reason,
+            cause_message=cause.message,
+        )
 
 
 class BudgetExceeded(GuardTripped):

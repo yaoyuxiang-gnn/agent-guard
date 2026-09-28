@@ -361,6 +361,10 @@ class GuardedClient:
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # A stopped guard refuses the next call, before it costs anything. The
+            # check happens at call time, so an async client's request (issued when
+            # the coroutine is awaited) is refused here too.
+            guard.raise_if_tripped()
             if preflight:
                 _preflight_estimate(guard, kwargs, chars_per_token)
             result = func(*args, **kwargs)
@@ -379,6 +383,7 @@ class GuardedClient:
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            guard.raise_if_tripped()
             result = func(*args, **kwargs)
             if inspect.isawaitable(result):
                 return _await_and_record(result, guard, kwargs, always_stream=True)

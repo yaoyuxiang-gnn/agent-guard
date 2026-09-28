@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from agentguard import BudgetExceeded, Guard, GuardConfigError
+from agentguard import BudgetExceeded, Guard, GuardConfigError, GuardStopped
 from agentguard.adapters import GuardedClient, guard_client
 from agentguard.adapters.anthropic import guard_anthropic
 from agentguard.adapters.openai import guard_openai
@@ -54,6 +54,36 @@ class FakeClient:
         self.messages = FakeMessages()
         self.api_key = "sk-secret"
         self.timeout = 30
+
+
+class StopModeTests(unittest.TestCase):
+    """`on_trip="stop"` must stop the *next* call, not just record a flag."""
+
+    def setUp(self) -> None:
+        self.client = FakeClient()
+        self.guard = Guard(max_usd=0.001, on_trip="stop")
+        self.proxy = GuardedClient(self.client, self.guard)
+        # The first call trips the budget; the fake reports 1,000 in / 100 out.
+        self.proxy.chat.completions.create(model="gpt-4o")
+        self.assertTrue(self.guard.stopped)
+
+    def test_a_stopped_guard_refuses_the_next_call(self) -> None:
+        with self.assertRaises(GuardStopped):
+            self.proxy.chat.completions.create(model="gpt-4o")
+
+    def test_the_refused_call_never_reaches_the_provider(self) -> None:
+        with self.assertRaises(GuardStopped):
+            self.proxy.chat.completions.create(model="gpt-4o")
+        # One call in total: the one that tripped the budget. A stopped guard costs
+        # nothing, which is the only way "stop" is worth having.
+        self.assertEqual(len(self.client.chat.completions.calls), 1)
+        self.assertEqual(self.guard.calls, 1)
+
+    def test_the_refused_call_does_not_move_the_budget(self) -> None:
+        spent = self.guard.spent_usd
+        with self.assertRaises(GuardStopped):
+            self.proxy.chat.completions.create(model="gpt-4o")
+        self.assertEqual(self.guard.spent_usd, spent)
 
 
 class ProxyBehaviourTests(unittest.TestCase):

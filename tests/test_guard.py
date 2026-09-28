@@ -19,6 +19,7 @@ from agentguard import (
     Detector,
     Guard,
     GuardConfigError,
+    GuardStopped,
     GuardTripped,
     LoopDetected,
     LoopVerdict,
@@ -254,19 +255,24 @@ class TripModeTests(unittest.TestCase):
             guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
         self.assertEqual(len(caught), 1)
 
-    def test_stop_mode_records_without_raising(self) -> None:
+    def test_stop_mode_records_without_raising_at_the_moment_it_trips(self) -> None:
         guard = Guard(max_usd=0.001, on_trip="stop")
         guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
         self.assertTrue(guard.stopped)
         self.assertIsInstance(guard.tripped, BudgetExceeded)
-        # The caller's loop is expected to check `stopped` and break out.
+        # The call that tripped the guard is still accounted for, and the caller's
+        # current step is allowed to finish so it can clean up.
         self.assertEqual(guard.calls, 1)
+        # From here on, every entry point refuses to do more work.
+        with self.assertRaises(GuardStopped):
+            guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
 
     def test_callback_fires_exactly_once(self) -> None:
         seen: list[GuardTripped] = []
         guard = Guard(max_usd=0.001, on_trip="stop", on_trip_callback=seen.append)
         guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
-        guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
+        with self.assertRaises(GuardStopped):
+            guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
         self.assertEqual(len(seen), 1)
         self.assertIsInstance(seen[0], BudgetExceeded)
 
@@ -280,6 +286,105 @@ class TripModeTests(unittest.TestCase):
             guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
         self.assertTrue(guard.stopped)
         self.assertTrue(any("callback" in str(w.message) for w in caught))
+
+
+class StopModeTests(unittest.TestCase):
+    """``on_trip="stop"`` used to depend on the caller remembering to check.
+
+    "The caller's loop is responsible for breaking out" is a fine intention and a
+    bad guarantee: a loop that forgets keeps spending, which is the failure this
+    library exists to prevent. Now the trip is recorded, the current step finishes,
+    and everything after it is refused.
+    """
+
+    def tripped_guard(self, **kwargs: object) -> Guard:
+        guard = Guard(max_usd=0.001, on_trip="stop", **kwargs)
+        guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
+        assert guard.stopped
+        return guard
+
+    def test_the_tripping_call_is_still_recorded(self) -> None:
+        guard = self.tripped_guard()
+        self.assertEqual(guard.calls, 1)
+        self.assertAlmostEqual(guard.spent_usd, 0.25)
+
+    def test_guard_stopped_carries_the_original_trip(self) -> None:
+        guard = self.tripped_guard()
+        with self.assertRaises(GuardStopped) as ctx:
+            guard.step()
+        self.assertIsInstance(ctx.exception.cause, BudgetExceeded)
+        # `reason` mirrors the cause, so handlers that switch on it keep working.
+        self.assertEqual(ctx.exception.reason, "budget")
+        self.assertIs(ctx.exception.cause, guard.tripped)
+
+    def test_guard_stopped_is_a_guard_tripped(self) -> None:
+        guard = self.tripped_guard()
+        with self.assertRaises(GuardTripped):
+            guard.record("gpt-4o", input_tokens=1, output_tokens=0)
+
+    def test_every_entry_point_refuses_after_a_stop(self) -> None:
+        calls = {
+            "step": lambda g: g.step(),
+            "record": lambda g: g.record("gpt-4o", input_tokens=1, output_tokens=0),
+            "observe": lambda g: g.observe("search(q=1)"),
+            "progress": lambda g: g.progress(1),
+            "check": lambda g: g.check(),
+            "preflight": lambda g: g.preflight("gpt-4o", input_tokens=1),
+        }
+        for name, call in calls.items():
+            with self.subTest(entry_point=name):
+                guard = self.tripped_guard()
+                with self.assertRaises(GuardStopped):
+                    call(guard)
+
+    def test_a_tool_body_never_runs_after_a_stop(self) -> None:
+        guard = self.tripped_guard()
+        ran = False
+        with self.assertRaises(GuardStopped), guard.tool("search", {"q": "x"}):
+            ran = True
+        self.assertFalse(ran)
+
+    def test_a_stopped_guard_still_calls_the_callback_once(self) -> None:
+        seen: list[GuardTripped] = []
+        guard = Guard(max_usd=0.001, on_trip="stop", on_trip_callback=seen.append)
+        guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
+        with self.assertRaises(GuardStopped):
+            guard.record("gpt-4o", input_tokens=1, output_tokens=0)
+        self.assertEqual(len(seen), 1)
+
+    def test_the_report_is_complete_for_a_stopped_run(self) -> None:
+        guard = self.tripped_guard()
+        report = guard.report()
+        self.assertEqual(report.calls, 1)
+        self.assertEqual(report.tripped_reason, "budget")
+        self.assertIn("$0.25", report.render(ascii_only=True))
+
+    def test_warn_mode_never_raises_and_keeps_counting(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            guard = Guard(max_usd=0.001, on_trip="warn")
+            guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
+            guard.record("gpt-4o", input_tokens=1, output_tokens=0)
+            guard.check()
+        self.assertEqual(guard.calls, 2)
+
+    def test_raise_mode_accounts_for_a_call_made_after_the_trip(self) -> None:
+        # The money was spent before the exception was raised, so the report has to
+        # show it. Dropping the record would under-report the very overspend this
+        # guard exists to make visible.
+        guard = Guard(max_usd=1.0)
+        guard.record("gpt-4o", input_tokens=390_000, output_tokens=0)  # $0.975
+        with self.assertRaises(BudgetExceeded):
+            guard.record("gpt-4o", input_tokens=42_000, output_tokens=0)  # $0.105
+        self.assertEqual(guard.calls, 2)
+        self.assertAlmostEqual(guard.spent_usd, 0.975 + 0.105)
+
+    def test_raise_mode_still_raises_the_original_trip_from_check(self) -> None:
+        guard = Guard(max_usd=0.001)
+        with self.assertRaises(BudgetExceeded):
+            guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
+        with self.assertRaises(BudgetExceeded):
+            guard.check()
 
 
 class PreflightTests(unittest.TestCase):
@@ -492,6 +597,8 @@ class LifecycleTests(unittest.TestCase):
         guard = Guard(max_usd=0.001, on_trip="stop")
         guard.record("gpt-4o", input_tokens=100_000, output_tokens=0)
         self.assertTrue(guard.stopped)
+        with self.assertRaises(GuardStopped):
+            guard.record("gpt-4o", input_tokens=10, output_tokens=0)
         guard.reset()
         guard.record("gpt-4o", input_tokens=10, output_tokens=0)
         self.assertFalse(guard.stopped)
@@ -532,7 +639,9 @@ class ReportingTests(unittest.TestCase):
 
     def test_report_captures_a_loop_trip(self) -> None:
         guard = Guard(on_trip="stop")
-        for _ in range(4):
+        for _ in range(3):
+            guard.observe("same()")
+        with self.assertRaises(GuardStopped):
             guard.observe("same()")
         report = guard.report()
         assert report.trip is not None

@@ -55,6 +55,7 @@ from .exceptions import (
     BudgetExceeded,
     GuardConfigError,
     GuardError,
+    GuardStopped,
     GuardTripped,
     LoopDetected,
     StepLimitExceeded,
@@ -85,6 +86,7 @@ __all__ = [
     # errors
     "GuardError",
     "GuardTripped",
+    "GuardStopped",
     "GuardConfigError",
     "BudgetExceeded",
     "TokenLimitExceeded",
