@@ -13,7 +13,7 @@ test-pytest:  ## Run the test suite under pytest
 	pytest
 
 coverage:  ## Run under pytest with a coverage report
-	pytest --cov=agent_guard --cov-report=term-missing
+	pytest --cov=agentguard --cov-report=term-missing
 
 lint:  ## Check style with ruff
 	ruff check .

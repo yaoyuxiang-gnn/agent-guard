@@ -8,8 +8,8 @@
 零依赖、不绑定任何厂商 SDK、无服务端、无遥测。
 
 [![CI](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/agent-guard.svg)](https://pypi.org/project/agent-guard/)
-[![Python versions](https://img.shields.io/pypi/pyversions/agent-guard.svg)](https://pypi.org/project/agent-guard/)
+[![PyPI](https://img.shields.io/pypi/v/agentguard.svg)](https://pypi.org/project/agentguard/)
+[![Python versions](https://img.shields.io/pypi/pyversions/agentguard.svg)](https://pypi.org/project/agentguard/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#设计原则)
 
@@ -36,17 +36,21 @@
 | **一张账单** | 一份可以直接贴进 issue 的成本报告 |
 
 ```bash
-pip install agent-guard
+pip install agentguard
 ```
 
 Python 3.10+，**运行时零依赖**——连厂商 SDK 都不需要。
+
+> **关于名字。** 安装名、import 名和命令行都是 `agentguard`（没有连字符）。PyPI 上
+> `agent-guard` 已经被另一个不相关的项目占用，所以 `pip install agent-guard` 装到的是
+> **那个**项目，不是这个。GitHub 仓库保留了连字符，因为在正文里读起来更顺。
 
 ---
 
 ## 快速开始
 
 ```python
-from agent_guard import BudgetExceeded, Guard
+from agentguard import BudgetExceeded, Guard
 
 guard = Guard(max_usd=1.00, max_steps=25, name="research-agent")
 
@@ -147,7 +151,7 @@ python examples/loop_detection.py
 检测器就是一个小的状态机，每次观察喂给它一个指纹：
 
 ```python
-from agent_guard import Detector, LoopVerdict
+from agentguard import Detector, LoopVerdict
 
 class SchemaThrashDetector(Detector):
     """当 agent 反复迁移同一张表时触发。"""
@@ -194,7 +198,7 @@ guard.preflight("gpt-4o", input_tokens=180_000, max_output_tokens=16_000)
 给整个客户端开一个开关即可：
 
 ```python
-from agent_guard.adapters.openai import guard_openai
+from agentguard.adapters.openai import guard_openai
 
 client = guard_openai(OpenAI(), max_usd=0.05, preflight=True)
 
@@ -238,7 +242,7 @@ with Guard(max_usd=1.0, max_steps=25) as guard:
 
 ```python
 from openai import OpenAI
-from agent_guard.adapters.openai import guard_openai
+from agentguard.adapters.openai import guard_openai
 
 client = guard_openai(OpenAI(), max_usd=1.0, max_steps=25)
 response = client.chat.completions.create(...)   # 自动记录
@@ -248,7 +252,7 @@ response = client.chat.completions.create(...)   # 自动记录
 **Anthropic、LiteLLM、OpenRouter、vLLM、Together、Groq 和 Azure OpenAI**：
 
 ```python
-from agent_guard.adapters.anthropic import guard_anthropic
+from agentguard.adapters.anthropic import guard_anthropic
 
 client = guard_anthropic(Anthropic(), max_usd=2.0)
 ```
@@ -256,7 +260,7 @@ client = guard_anthropic(Anthropic(), max_usd=2.0)
 如果你更喜欢装饰器而不是上下文管理器：
 
 ```python
-from agent_guard import current_guard, guarded
+from agentguard import current_guard, guarded
 
 @guarded(max_usd=0.50, max_steps=20)
 def summarise(url: str) -> str:
@@ -271,14 +275,14 @@ def summarise(url: str) -> str:
 ## 命令行
 
 ```bash
-$ agent-guard report run.json          # 渲染 guard.save(...) 存下的报告
-$ agent-guard report run.json --json
-$ agent-guard pricing gpt-4o
-$ agent-guard pricing | head
+$ agentguard report run.json          # 渲染 guard.save(...) 存下的报告
+$ agentguard report run.json --json
+$ agentguard pricing gpt-4o
+$ agentguard pricing | head
 ```
 
 ```
-$ agent-guard pricing gpt-4o
+$ agentguard pricing gpt-4o
 gpt-4o  (USD per 1M tokens, snapshot 2026-01)
 
   input        $2.5 / 1M
@@ -291,7 +295,7 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
     10k in + 2k out          $0.045
 ```
 
-在 worker 里 `guard.save("run.json")`，在 CI 里 `agent-guard report run.json`。读取方不需要在业务依赖里装 agent-guard。
+在 worker 里 `guard.save("run.json")`，在 CI 里 `agentguard report run.json`。读取方不需要在业务依赖里装 agent-guard。
 
 ---
 
@@ -317,7 +321,7 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
 
 - **不是可观测性平台。** 什么都不往外发。没有服务端、没有界面、没有账号、没有后台线程。
 - **不是代理。** 它不夹在你和厂商之间，也看不到没被告知的流量。
-- **不是分词器。** 内置价格只是一份指示性快照（见 [`PRICING_AS_OF`](src/agent_guard/pricing.py)）。要用来出账的数字请自行核实，并在需要时覆盖：
+- **不是分词器。** 内置价格只是一份指示性快照（见 [`PRICING_AS_OF`](src/agentguard/pricing.py)）。要用来出账的数字请自行核实，并在需要时覆盖：
   ```python
   Guard(pricing={"my-finetune-v3": Price(3.00, 12.00)})
   ```
@@ -353,7 +357,7 @@ git clone https://github.com/yaoyuxiang-gnn/agent-guard
 cd agent-guard
 
 python -m unittest discover -s tests -t .   # 无需安装任何东西
-pytest --cov=agent_guard                     # 如果你更喜欢 pytest
+pytest --cov=agentguard                     # 如果你更喜欢 pytest
 python examples/basic.py
 ```
 

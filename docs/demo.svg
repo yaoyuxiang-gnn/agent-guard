@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="591" height="503" viewBox="0 0 591 503" role="img" aria-label="agent-guard stopping an agent that exceeded its budget">
-<title>agent-guard stopping an agent that exceeded its budget</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="591" height="503" viewBox="0 0 591 503" role="img" aria-label="agentguard stopping an agent that exceeded its budget">
+<title>agentguard stopping an agent that exceeded its budget</title>
 <style>
   text { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 13px; white-space: pre; }
   .bar { fill: #161b22; }
@@ -45,7 +45,7 @@
 <tspan fill="#6e7681"></tspan>
 </text>
 <text xml:space="preserve" x="18" y="181" opacity="0"><animate attributeName="opacity" dur="10.94s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.1792;1"/>
-<tspan fill="#58a6ff">agent-guard  research-agent</tspan>
+<tspan fill="#58a6ff">agentguard  research-agent</tspan>
 </text>
 <text xml:space="preserve" x="18" y="200" opacity="0"><animate attributeName="opacity" dur="10.94s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.2048;1"/>
 <tspan fill="#30363d">================================================================</tspan>

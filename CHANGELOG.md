@@ -9,9 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
-## [0.1.0] - 2026-01-15
+## [0.1.0] - 2026-09-28
 
 First release.
+
+Installs as **`agentguard`**, with no hyphen. An unrelated project already owns
+`agent-guard` on PyPI, and its import name is also `agent_guard`, so both had to
+move. See [CONTRIBUTING.md](CONTRIBUTING.md) for the spelling rule used across the
+codebase: `agent-guard` is the repository and the name in prose, `agentguard` is
+everything a program prints and everything a user types.
 
 ### Added
 
@@ -38,9 +44,9 @@ First release.
   mask the trip if it raises.
 - **`Report`** — a text report with limit bars and a per-model breakdown, plus
   `as_dict()` / `from_dict()` / `to_json()` / `save()` for CI artefacts.
-- **`agent-guard` CLI** — `report` renders a saved JSON report, `pricing` shows the
+- **`agentguard` CLI** — `report` renders a saved JSON report, `pricing` shows the
   bundled table and worked example costs.
-- **`agent-guard.adapters`** — duck-typed OpenAI, Anthropic and generic client
+- **`agentguard.adapters`** — duck-typed OpenAI, Anthropic and generic client
   wrappers. No provider SDK is imported, so LiteLLM, OpenRouter, vLLM, Together,
   Groq and Azure OpenAI work through the same code path.
 - **`@guarded`** — decorator form, with a fresh guard per call by default so one

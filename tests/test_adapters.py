@@ -10,10 +10,10 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from agent_guard import BudgetExceeded, Guard, GuardConfigError
-from agent_guard.adapters import GuardedClient, guard_client
-from agent_guard.adapters.anthropic import guard_anthropic
-from agent_guard.adapters.openai import guard_openai
+from agentguard import BudgetExceeded, Guard, GuardConfigError
+from agentguard.adapters import GuardedClient, guard_client
+from agentguard.adapters.anthropic import guard_anthropic
+from agentguard.adapters.openai import guard_openai
 
 
 class FakeCompletions:

@@ -21,7 +21,7 @@ Three integration depths, from least to most magic::
                     ...
 
     # 3. Wrapped client: every call accounted automatically.
-    from agent_guard.adapters.openai import guard_openai
+    from agentguard.adapters.openai import guard_openai
     client = guard_openai(OpenAI(), guard)
 """
 
@@ -66,10 +66,10 @@ __all__ = ["Guard", "Step", "current_guard"]
 _ON_TRIP_MODES = ("raise", "warn", "stop")
 
 _current_guard: contextvars.ContextVar[Guard | None] = contextvars.ContextVar(
-    "agent_guard_current", default=None
+    "agentguard_current", default=None
 )
 _current_step: contextvars.ContextVar[int | None] = contextvars.ContextVar(
-    "agent_guard_step", default=None
+    "agentguard_step", default=None
 )
 
 
@@ -79,7 +79,7 @@ def current_guard() -> Guard | None:
     Useful deep inside an agent's call stack, where threading a guard parameter
     through every function would be noise::
 
-        from agent_guard import current_guard
+        from agentguard import current_guard
 
         def my_tool(query: str) -> str:
             guard = current_guard()
@@ -172,12 +172,12 @@ class Guard:
         without raising, for loops that prefer to break out themselves.
     :param pricing: Extra or overriding prices, as ``{model: Price}`` or
         ``{model: (input_per_1m, output_per_1m)}``.
-    :param price_table: A prebuilt :class:`~agent_guard.PriceTable` to use instead.
+    :param price_table: A prebuilt :class:`~agentguard.PriceTable` to use instead.
     :param default_price: Price to assume for models with no entry. When omitted,
         unknown models are counted as *unpriced* rather than guessed.
     :param on_unknown_model: ``"warn"`` (default), ``"error"`` or ``"ignore"``.
     :param loop_detection: Set ``False`` to disable detectors entirely.
-    :param detectors: Replace the default action detectors. See :mod:`agent_guard.loop`.
+    :param detectors: Replace the default action detectors. See :mod:`agentguard.loop`.
     :param progress_detectors: Replace the default progress detectors.
     :param on_trip_callback: Called once, with the trip exception, the first time
         a limit fires. Ideal for alerting or for gracefully stopping a remote job.
@@ -346,7 +346,7 @@ class Guard:
 
     @property
     def tracker(self) -> CostTracker:
-        """The underlying :class:`~agent_guard.CostTracker`."""
+        """The underlying :class:`~agentguard.CostTracker`."""
         return self._tracker
 
     @property
@@ -436,7 +436,7 @@ class Guard:
             if not self._warned_empty:
                 self._warned_empty = True
                 warnings.warn(
-                    "agent-guard could not find token usage on the recorded response; "
+                    "agentguard could not find token usage on the recorded response; "
                     "this call counts as $0 and will not move the budget. Pass "
                     "input_tokens=/output_tokens= explicitly, or use "
                     "Guard.record(...) with the counts your provider reports.",
@@ -467,7 +467,7 @@ class Guard:
         """Refuse a call *before* making it if its worst case cannot fit.
 
         Returns the worst-case cost in USD when the call is affordable. Raises
-        :class:`~agent_guard.BudgetExceeded` when it is not — which is the only
+        :class:`~agentguard.BudgetExceeded` when it is not — which is the only
         way to stop an expensive single call from overshooting a budget that a
         post-hoc check could only report after the money was gone.
 
@@ -501,7 +501,7 @@ class Guard:
 
     @staticmethod
     def call_signature(name: str, args: Any = None) -> str:
-        """Build a stable fingerprint for a tool call. See :func:`agent_guard.call_signature`."""
+        """Build a stable fingerprint for a tool call. See :func:`agentguard.call_signature`."""
         return call_signature(name, args)
 
     def observe(self, signature: str, *, step: int | None = None) -> None:
@@ -588,7 +588,7 @@ class Guard:
                 self._on_trip_callback(stored)
             except Exception:  # a broken callback must not mask the trip
                 warnings.warn(
-                    "agent-guard on_trip_callback raised; the trip is still recorded",
+                    "agentguard on_trip_callback raised; the trip is still recorded",
                     RuntimeWarning,
                     stacklevel=3,
                 )
@@ -603,7 +603,7 @@ class Guard:
     # -- reporting -----------------------------------------------------------
 
     def report(self) -> Report:
-        """Snapshot this run as a :class:`~agent_guard.Report`."""
+        """Snapshot this run as a :class:`~agentguard.Report`."""
         by_model = tuple(self._tracker.by_model().values())
         trip_verdict: LoopVerdict | None = None
         tripped_reason: str | None = None
@@ -659,7 +659,7 @@ class Guard:
 
             guard.save("run.json")
 
-            $ agent-guard report run.json
+            $ agentguard report run.json
         """
         target = Path(path)
         # newline="\n" so a report written on Windows is byte-identical to one

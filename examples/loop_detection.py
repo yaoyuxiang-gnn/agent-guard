@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from agent_guard import Guard, LoopDetected
+from agentguard import Guard, LoopDetected
 
 
 def run_scenario(title: str, drive: Callable[[Guard], None], *, expect_trip: bool = True) -> None:

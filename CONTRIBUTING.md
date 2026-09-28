@@ -19,7 +19,7 @@ If you want the optional tooling:
 
 ```bash
 python -m pip install -e ".[dev]"   # pytest, pytest-cov, ruff, mypy
-pytest --cov=agent_guard
+pytest --cov=agentguard
 ruff check .
 mypy
 ```
@@ -41,9 +41,27 @@ change, however good the feature is.
 4. **Fail at construction.** Misconfiguration raises `GuardConfigError` while the
    `Guard` is being built, never in the middle of an agent run.
 
+## One name rule, and why it matters
+
+An unrelated project already publishes `agent-guard` on PyPI, and its import name is
+also `agent_guard`. That is why this project installs as **`agentguard`** — no hyphen —
+for the distribution name, the import name and the console script.
+
+So there are exactly two spellings, and the split is not cosmetic:
+
+| Where | Spelling |
+|---|---|
+| The repository, and prose in README / CHANGELOG / issue templates | `agent-guard` |
+| Anything a program prints, and anything a user types | `agentguard` |
+
+That means error prefixes, the report header, `--version`, warning messages and every
+code sample are `agentguard`. If a user runs `pip install agentguard` and the tool then
+introduces itself as `agent-guard`, they will reasonably wonder whether they installed
+the wrong package — which, on this particular name, they might have.
+
 ## Adding a loop detector
 
-Subclass `Detector` in `src/agent_guard/loop.py`:
+Subclass `Detector` in `src/agentguard/loop.py`:
 
 ```python
 class MyDetector(Detector):
@@ -78,13 +96,13 @@ document it in the README table.
 Prices move and this table is a best-effort snapshot. A pull request that only
 touches prices is very welcome and easy to review.
 
-In `src/agent_guard/pricing.py`:
+In `src/agentguard/pricing.py`:
 
 1. Edit the entry in `DEFAULT_PRICING`.
 2. Bump `PRICING_AS_OF` if you have re-checked the table broadly.
 3. Add the canonical name to `_DOTTED_PREFIXES` only if the provider uses dotted
    namespacing (Bedrock / Vertex style).
-4. Run `python -m unittest tests.test_pricing` and `python -m agent_guard.cli pricing <model>`.
+4. Run `python -m unittest tests.test_pricing` and `python -m agentguard.cli pricing <model>`.
 
 Two rules for this table:
 
@@ -104,7 +122,7 @@ Thresholds are user-facing behaviour, so please include in the pull request:
 ## Adding a provider adapter
 
 Adapters are pure duck-typing and must not import a provider SDK. See
-`src/agent_guard/adapters/__init__.py`. If a client's usage object has a shape the
+`src/agentguard/adapters/__init__.py`. If a client's usage object has a shape the
 extractor does not recognise, extend `extract_usage()` in `tracker.py` rather than
 special-casing the adapter — every provider benefits.
 

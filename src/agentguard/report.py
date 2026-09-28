@@ -31,11 +31,11 @@ def supports_unicode() -> bool:
 
     Windows consoles redirected to a file default to a legacy code page, where
     printing ``█`` raises :class:`UnicodeEncodeError`. Rather than crash a report,
-    agent-guard falls back to ASCII. Force it either way with ``AGENT_GUARD_ASCII``.
+    agent-guard falls back to ASCII. Force it either way with ``AGENTGUARD_ASCII``.
     """
     global _unicode_cache
     if _unicode_cache is None:
-        override = os.environ.get("AGENT_GUARD_ASCII", "").strip().lower()
+        override = os.environ.get("AGENTGUARD_ASCII", "").strip().lower()
         if override in ("1", "true", "yes"):
             _unicode_cache = False
         elif override in ("0", "false", "no"):
@@ -121,7 +121,7 @@ class LimitStatus:
 class Report:
     """An immutable snapshot of a guard's run.
 
-    Produced by :meth:`agent_guard.Guard.report`; safe to store, log or serialise
+    Produced by :meth:`agentguard.Guard.report`; safe to store, log or serialise
     after the guard itself has been garbage collected.
     """
 
@@ -152,7 +152,7 @@ class Report:
         rule = "-" * width if ascii_only else "─" * width
 
         lines: list[str] = []
-        title = "agent-guard" + (f"  {self.name}" if self.name else "")
+        title = "agentguard" + (f"  {self.name}" if self.name else "")
         lines.append(title)
         lines.append(("=" if ascii_only else "═") * width)
 
@@ -244,7 +244,7 @@ class Report:
     def from_dict(cls, data: Mapping[str, Any]) -> Report:
         """Rebuild a report from :meth:`as_dict` output.
 
-        This is what lets the ``agent-guard report`` CLI render a JSON file that
+        This is what lets the ``agentguard report`` CLI render a JSON file that
         was written by a different process — typically one that had the guard but
         not a terminal.
 

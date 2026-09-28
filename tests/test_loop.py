@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import unittest
 
-from agent_guard import GuardConfigError
-from agent_guard.loop import (
+from agentguard import GuardConfigError
+from agentguard.loop import (
     CycleDetector,
     LoopMonitor,
     LoopVerdict,

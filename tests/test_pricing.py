@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import unittest
 
-from agent_guard import DEFAULT_PRICING, GuardConfigError, Price, PriceTable
-from agent_guard.pricing import normalize_model_key
+from agentguard import DEFAULT_PRICING, GuardConfigError, Price, PriceTable
+from agentguard.pricing import normalize_model_key
 
 
 class NormalizeModelKeyTests(unittest.TestCase):

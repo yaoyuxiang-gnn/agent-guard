@@ -5,7 +5,7 @@ deadline. Zero runtime dependencies, no vendor SDK, framework agnostic.
 
 Quick start::
 
-    from agent_guard import Guard, BudgetExceeded
+    from agentguard import Guard, BudgetExceeded
 
     guard = Guard(max_usd=1.00, max_steps=25, name="research-agent")
 

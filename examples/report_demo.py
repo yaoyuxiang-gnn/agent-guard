@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 
-from agent_guard import Guard
+from agentguard import Guard
 
 
 def build_guard() -> Guard:

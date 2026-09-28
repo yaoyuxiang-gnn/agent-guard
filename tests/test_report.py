@@ -1,4 +1,4 @@
-"""Tests for :class:`agent_guard.Report` and its rendering."""
+"""Tests for :class:`agentguard.Report` and its rendering."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ import json
 import os
 import unittest
 
-from agent_guard import LimitStatus, LoopVerdict, ModelSummary, Report, Usage
-from agent_guard import report as report_module
-from agent_guard.report import build_limits
+from agentguard import LimitStatus, LoopVerdict, ModelSummary, Report, Usage
+from agentguard import report as report_module
+from agentguard.report import build_limits
 
 
 def sample_report(**overrides: object) -> Report:
@@ -120,25 +120,25 @@ class SupportsUnicodeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         report_module._unicode_cache = self._saved
-        os.environ.pop("AGENT_GUARD_ASCII", None)
+        os.environ.pop("AGENTGUARD_ASCII", None)
 
     def test_env_forces_ascii(self) -> None:
-        os.environ["AGENT_GUARD_ASCII"] = "1"
+        os.environ["AGENTGUARD_ASCII"] = "1"
         self.assertFalse(report_module.supports_unicode())
 
     def test_env_forces_unicode(self) -> None:
-        os.environ["AGENT_GUARD_ASCII"] = "0"
+        os.environ["AGENTGUARD_ASCII"] = "0"
         self.assertTrue(report_module.supports_unicode())
 
     def test_env_accepts_word_forms(self) -> None:
-        os.environ["AGENT_GUARD_ASCII"] = "true"
+        os.environ["AGENTGUARD_ASCII"] = "true"
         self.assertFalse(report_module.supports_unicode())
 
 
 class RenderTests(unittest.TestCase):
     def test_renders_the_headline_numbers(self) -> None:
         text = sample_report().render(ascii_only=True)
-        self.assertIn("agent-guard  agent", text)
+        self.assertIn("agentguard  agent", text)
         self.assertIn("12.4s", text)
         self.assertIn("184,000", text)  # 150k + 34k
         self.assertIn("cached", text)
@@ -148,6 +148,13 @@ class RenderTests(unittest.TestCase):
         self.assertIn("limits", text)
         self.assertIn("budget", text)
         self.assertIn("steps", text)
+
+    def test_the_header_uses_the_installable_name(self) -> None:
+        # `agent-guard` is the repository and brand name, but it is also somebody
+        # else's PyPI package. Output must only ever say `agentguard`.
+        text = sample_report().render(ascii_only=True)
+        self.assertIn("agentguard", text)
+        self.assertNotIn("agent-guard", text)
 
     def test_renders_the_per_model_breakdown(self) -> None:
         text = sample_report().render(ascii_only=True)

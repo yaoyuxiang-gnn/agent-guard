@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_guard import BudgetExceeded, Guard
+from agentguard import BudgetExceeded, Guard
 
 #: 4,200 prompt + 850 completion tokens at gpt-4o list prices is about $0.019,
 #: so a five-cent cap should buy two calls and stop the third.

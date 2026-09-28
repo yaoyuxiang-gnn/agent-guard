@@ -21,7 +21,7 @@ Detectors are intentionally *explainable*: each returns a human-readable
 :class:`LoopVerdict`, because "why did you kill my agent?" is the first question
 anyone asks::
 
-    from agent_guard import Guard, LoopDetected
+    from agentguard import Guard, LoopDetected
 
     guard = Guard(loop_detection=True)
     try:
@@ -349,7 +349,7 @@ class SimilarityDetector(Detector):
 class NoProgressDetector(Detector):
     """Trip when an explicitly reported progress marker stops changing.
 
-    Unlike the other detectors this one is fed by :meth:`agent_guard.Guard.progress`
+    Unlike the other detectors this one is fed by :meth:`agentguard.Guard.progress`
     rather than by tool calls, because only your agent knows what "progress" means
     — a row count, an HTTP cursor, a test-pass tally.
 
@@ -449,5 +449,5 @@ def default_detectors() -> list[Detector]:
 
 
 def default_progress_detectors() -> list[Detector]:
-    """Detector set used for the :meth:`agent_guard.Guard.progress` channel."""
+    """Detector set used for the :meth:`agentguard.Guard.progress` channel."""
     return [NoProgressDetector()]

@@ -1,4 +1,4 @@
-"""Tests for :class:`agent_guard.Guard`.
+"""Tests for :class:`agentguard.Guard`.
 
 Everything here is deterministic: the clock is injected, so the time limit is
 tested without sleeping, and nothing touches the network.
@@ -14,7 +14,7 @@ import warnings
 from pathlib import Path
 from types import SimpleNamespace as NS
 
-from agent_guard import (
+from agentguard import (
     BudgetExceeded,
     Detector,
     Guard,
@@ -29,7 +29,7 @@ from agent_guard import (
     TokenLimitExceeded,
     current_guard,
 )
-from agent_guard.guard import Step
+from agentguard.guard import Step
 
 
 class FakeClock:
@@ -484,7 +484,10 @@ class ReportingTests(unittest.TestCase):
 
     def test_report_render_mentions_the_essentials(self) -> None:
         text = self.build_guard().report().render(ascii_only=True)
-        self.assertIn("agent-guard", text)
+        # The tool names itself `agentguard` in output, never `agent-guard`: an
+        # unrelated package owns the hyphenated name on PyPI, and a user who sees
+        # it here would reasonably wonder whether they installed the wrong thing.
+        self.assertIn("agentguard", text)
         self.assertIn("agent", text)
         self.assertIn("gpt-4o", text)
         self.assertIn("budget", text)

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agent-guard"
+name = "agentguard"
 description = "Budget caps, runaway-loop detection and circuit breakers for AI agents. Zero dependencies, framework agnostic."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -62,13 +62,13 @@ Changelog = "https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CHANGELOG.m
 Roadmap = "https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md"
 
 [project.scripts]
-agent-guard = "agent_guard.cli:main"
+agentguard = "agentguard.cli:main"
 
 [tool.hatch.version]
-path = "src/agent_guard/_version.py"
+path = "src/agentguard/_version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_guard"]
+packages = ["src/agentguard"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -90,7 +90,7 @@ addopts = "-ra --strict-markers"
 filterwarnings = ["error"]
 
 [tool.coverage.run]
-source = ["agent_guard"]
+source = ["agentguard"]
 branch = true
 
 [tool.coverage.report]
@@ -126,7 +126,7 @@ ignore = [
 [tool.mypy]
 python_version = "3.10"
 strict = true
-files = ["src/agent_guard"]
+files = ["src/agentguard"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
