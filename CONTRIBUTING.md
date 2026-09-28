@@ -11,7 +11,7 @@ No install is required to run the test suite or the examples.
 git clone https://github.com/yaoyuxiang-gnn/agent-guard
 cd agent-guard
 
-python -m unittest discover -s tests -t .   # 265 tests, no network, no fixtures
+python -m unittest discover -s tests -t .   # 441 tests, no network, no fixtures
 python examples/basic.py
 ```
 
@@ -132,6 +132,10 @@ special-casing the adapter — every provider benefits.
 - **Every docstring example runs as a test.** If you add a `>>>` block, it must
   pass; `tests/test_doctests.py` enforces this and fails if the total number of
   collected examples drops below a floor.
+- **Every file in `examples/` runs in CI**, so a new example means adding it to
+  `make examples` and to the "Run every example" step in `.github/workflows/ci.yml`
+  in the same change. An example nothing runs is documentation that has already
+  drifted.
 - Tests must not touch the network. Use the fake clients in `tests/` as a model.
 - Time is injected, never slept on: pass `clock=` a fake to `Guard`.
 - The suite runs under both `unittest` and `pytest`, on Python 3.10–3.13 and on

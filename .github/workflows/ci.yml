@@ -41,6 +41,9 @@ jobs:
       # an explicit PYTHONPATH they fail with ModuleNotFoundError on any machine
       # where agent-guard is not installed -- which is precisely the bare-interpreter
       # case this job exists to prove.
+      #
+      # Every example is listed: one that nothing runs is documentation that has
+      # already drifted. `make examples` runs the same list.
       - name: Run every example
         env:
           PYTHONPATH: src
@@ -49,6 +52,9 @@ jobs:
           python examples/loop_detection.py
           python examples/wrapped_client.py
           python examples/report_demo.py
+          python examples/streaming.py
+          python examples/langgraph_demo.py
+          python examples/custom_models.py
 
   coverage:
     name: coverage
@@ -63,9 +69,12 @@ jobs:
       - name: Install test tooling
         run: python -m pip install --upgrade pip pytest pytest-cov
 
-      # Proves the suite is pytest-compatible as well as unittest-compatible.
+      # Proves the suite is pytest-compatible as well as unittest-compatible, and
+      # keeps coverage from eroding quietly: the floor is a ratchet, not a target.
       - name: Run under pytest
-        run: pytest --cov=agentguard --cov-report=term-missing --cov-report=xml
+        run: >-
+          pytest --cov=agentguard --cov-report=term-missing --cov-report=xml
+          --cov-fail-under=90
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4

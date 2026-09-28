@@ -12,8 +12,8 @@ test:  ## Run the test suite (stdlib only, no install, no network)
 test-pytest:  ## Run the test suite under pytest
 	pytest
 
-coverage:  ## Run under pytest with a coverage report
-	pytest --cov=agentguard --cov-report=term-missing
+coverage:  ## Run under pytest with a coverage report (same floor CI enforces)
+	pytest --cov=agentguard --cov-report=term-missing --cov-fail-under=90
 
 lint:  ## Check style with ruff
 	ruff check .
@@ -31,6 +31,8 @@ examples:  ## Run every example end to end
 	PYTHONPATH=src python examples/loop_detection.py
 	PYTHONPATH=src python examples/wrapped_client.py
 	PYTHONPATH=src python examples/report_demo.py
+	PYTHONPATH=src python examples/streaming.py
+	PYTHONPATH=src python examples/langgraph_demo.py
 	PYTHONPATH=src python examples/custom_models.py
 
 demo:  ## Regenerate docs/demo.svg from the real output of examples/basic.py
