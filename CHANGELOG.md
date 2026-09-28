@@ -83,7 +83,7 @@ Nothing yet.
   detectors. It subclasses `BaseCallbackHandler` when langchain-core is present
   and falls back to a duck-typed class otherwise — no new dependency either way.
   `raise_error` is set so a trip stops the run instead of being logged away.
-- **`agentguard[langgraph]` extra.**
+- **`agent-budget-guard-py[langgraph]` extra.**
 
 ### Changed
 
@@ -122,11 +122,11 @@ Nothing yet.
 
 First release.
 
-Installs as **`agentguard`**, with no hyphen. An unrelated project already owns
-`agent-guard` on PyPI, and its import name is also `agent_guard`, so both had to
-move. See [CONTRIBUTING.md](CONTRIBUTING.md) for the spelling rule used across the
-codebase: `agent-guard` is the repository and the name in prose, `agentguard` is
-everything a program prints and everything a user types.
+Installs as **`agent-budget-guard-py`**. `agent-guard` was already taken on PyPI, and
+PyPI rejects a new project whose name differs from an existing one only by
+punctuation — so the shorter `agentguard` was never registrable either. Only the
+distribution name carries the long form: the import and the console script are both
+`agentguard`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the spelling rule.
 
 ### Added
 

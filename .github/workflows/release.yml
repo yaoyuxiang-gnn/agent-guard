@@ -66,7 +66,7 @@ jobs:
     # no API token ever has to live in repository secrets.
     environment:
       name: pypi
-      url: https://pypi.org/p/agentguard
+      url: https://pypi.org/p/agent-budget-guard-py
     permissions:
       id-token: write
     steps:

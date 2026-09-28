@@ -8,8 +8,8 @@ Budget caps, runaway-loop detection and circuit breakers for AI agents.
 Zero dependencies. No provider SDK. No server. No telemetry.
 
 [![CI](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/agentguard.svg)](https://pypi.org/project/agentguard/)
-[![Python versions](https://img.shields.io/pypi/pyversions/agentguard.svg)](https://pypi.org/project/agentguard/)
+[![PyPI](https://img.shields.io/pypi/v/agent-budget-guard-py.svg)](https://pypi.org/project/agent-budget-guard-py/)
+[![Python versions](https://img.shields.io/pypi/pyversions/agent-budget-guard-py.svg)](https://pypi.org/project/agent-budget-guard-py/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#design-principles)
 
@@ -39,15 +39,15 @@ A budget check that runs *after* the call can only tell you what you already spe
 | **A receipt** | A cost report you can paste into an issue |
 
 ```bash
-pip install agentguard
+pip install agent-budget-guard-py
 ```
 
 Python 3.10+. **No runtime dependencies** — not even a provider SDK.
 
-> **About the name.** The package, the import and the CLI are all `agentguard` (no hyphen).
-> An unrelated project already owns `agent-guard` on PyPI, so `pip install agent-guard`
-> installs *that* one rather than this. The GitHub repository keeps the hyphen because it
-> reads better in prose.
+> **About the name.** The PyPI distribution is `agent-budget-guard-py`; the import and the
+> console script are both `agentguard`. `agent-guard` was already taken, and PyPI rejects a
+> new name that differs from an existing one only by punctuation — so `agentguard` was not
+> registrable either. Nothing you import or type is affected.
 
 ---
 

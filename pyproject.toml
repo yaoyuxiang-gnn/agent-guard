@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentguard"
+name = "agent-budget-guard-py"
 description = "Budget caps, runaway-loop detection and circuit breakers for AI agents. Zero dependencies, framework agnostic."
 readme = "README.md"
 requires-python = ">=3.10"

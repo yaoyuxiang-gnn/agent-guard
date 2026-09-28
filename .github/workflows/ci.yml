@@ -117,13 +117,20 @@ jobs:
         run: |
           python - <<'PY'
           import importlib.metadata as md
+          import pathlib
           import sys
+          import tomllib
 
-          declared = md.requires("agentguard") or []
+          # Read the distribution name instead of hardcoding it: it is
+          # deliberately not the same string as the import name.
+          name = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["name"]
+          declared = md.requires(name) or []
           runtime = [req for req in declared if "extra ==" not in req]
           if runtime:
               sys.exit(f"runtime dependencies crept into the wheel: {runtime}")
-          print(f"zero runtime dependencies; {len(declared)} optional extras declared")
+          print(f"{name}: zero runtime dependencies; {len(declared)} optional extras")
           PY
 
       - uses: actions/upload-artifact@v4

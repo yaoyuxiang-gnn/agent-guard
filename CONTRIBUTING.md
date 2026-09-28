@@ -43,21 +43,25 @@ change, however good the feature is.
 
 ## One name rule, and why it matters
 
-An unrelated project already publishes `agent-guard` on PyPI, and its import name is
-also `agent_guard`. That is why this project installs as **`agentguard`** — no hyphen —
-for the distribution name, the import name and the console script.
-
-So there are exactly two spellings, and the split is not cosmetic:
+The distribution name, the import name and the console script are deliberately not all
+the same string, and the split is not cosmetic:
 
 | Where | Spelling |
 |---|---|
 | The repository, and prose in README / CHANGELOG / issue templates | `agent-guard` |
-| Anything a program prints, and anything a user types | `agentguard` |
+| The PyPI distribution name | `agent-budget-guard-py` |
+| What you import, and what you type on the command line | `agentguard` |
 
-That means error prefixes, the report header, `--version`, warning messages and every
-code sample are `agentguard`. If a user runs `pip install agentguard` and the tool then
-introduces itself as `agent-guard`, they will reasonably wonder whether they installed
-the wrong package — which, on this particular name, they might have.
+`agent-guard` was already taken on PyPI. The obvious alternative was not available
+either: PyPI rejects a new project whose name differs from an existing one only by
+punctuation, and `agentguard` collapses to the same string as `agent-guard` under that
+rule. Hence the long distribution name, which is the only place the long form appears.
+
+Inside the code the rule is therefore simple: **error prefixes, the report header,
+`--version`, warning messages and every code sample say `agentguard`.** Nothing a user
+imports or types should ever mention `agent-budget-guard-py` — that string belongs in
+`pyproject.toml`, the install line, and `pip install <name>[extra]` in the docs, and
+nowhere else.
 
 ## Adding a loop detector
 

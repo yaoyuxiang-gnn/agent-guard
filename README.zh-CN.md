@@ -8,8 +8,8 @@
 零依赖、不绑定任何厂商 SDK、无服务端、无遥测。
 
 [![CI](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/yaoyuxiang-gnn/agent-guard/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/agentguard.svg)](https://pypi.org/project/agentguard/)
-[![Python versions](https://img.shields.io/pypi/pyversions/agentguard.svg)](https://pypi.org/project/agentguard/)
+[![PyPI](https://img.shields.io/pypi/v/agent-budget-guard-py.svg)](https://pypi.org/project/agent-budget-guard-py/)
+[![Python versions](https://img.shields.io/pypi/pyversions/agent-budget-guard-py.svg)](https://pypi.org/project/agent-budget-guard-py/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#设计原则)
 
@@ -36,14 +36,14 @@
 | **一张账单** | 一份可以直接贴进 issue 的成本报告 |
 
 ```bash
-pip install agentguard
+pip install agent-budget-guard-py
 ```
 
 Python 3.10+，**运行时零依赖**——连厂商 SDK 都不需要。
 
-> **关于名字。** 安装名、import 名和命令行都是 `agentguard`（没有连字符）。PyPI 上
-> `agent-guard` 已经被另一个不相关的项目占用，所以 `pip install agent-guard` 装到的是
-> **那个**项目，不是这个。GitHub 仓库保留了连字符，因为在正文里读起来更顺。
+> **关于名字。** PyPI 上的发行名是 `agent-budget-guard-py`，而 import 名和命令行都是
+> `agentguard`。`agent-guard` 已被占用，而 PyPI 会拒绝「与现有项目仅标点不同」的新名字，
+> 所以 `agentguard` 也注册不了。你 import 和输入的东西都不受影响。
 
 ---
 
