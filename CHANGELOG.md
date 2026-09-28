@@ -26,16 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `disable` (drop a bundled price you do not trust — the model becomes *unpriced*,
   so it is reported and excluded from the budget instead of billed at a number you
   rejected). Discovery order: `$AGENTGUARD_CONFIG` (an explicit path, or
-  `none`/`off`/`0` to switch config off entirely), then `agentguard.json` /
-  `.agentguard.json` in the working directory or nearest parent, then
-  `%APPDATA%\agentguard\pricing.json` (`$XDG_CONFIG_HOME/...` elsewhere). Files
-  merge, with the more specific one winning on a conflict.
+  `none`/`off`/`0` to switch config off entirely), then the per-user file
+  (`%APPDATA%\agentguard\pricing.json`, or `$XDG_CONFIG_HOME/...` elsewhere), then
+  `agentguard.json` / `.agentguard.json` in the working directory or nearest
+  parent. Files merge, with the more specific one winning on a conflict.
+  A config in the **project tree** is only read when explicitly trusted with
+  `$AGENTGUARD_TRUST_PROJECT_CONFIG=1`: it travels with the repository, so reading
+  it by default would let whoever wrote that repository reprice models or disable
+  the expensive ones — a guard bypass performed with a data file. A skipped project
+  file is reported once per process, `agentguard config path` shows what was
+  skipped and why, and writing one through the CLI says the same thing.
   New: `agentguard.config` (`PricingConfig`, `load_config`, `parse_config`,
-  `config_paths`, and the editing helpers the CLI uses), `PriceTable.from_config`,
-  `PriceTable.origin` / `aliases` / `disabled` / `sources`, `Guard(use_config=,
-  config_path=, config=, aliases=, disable=)`, `Guard.price_table`,
-  `Guard.pricing_config`, and `Report.pricing_sources` so a saved report names the
-  config that priced it.
+  `config_paths`, `project_config_trusted`, and the editing helpers the CLI uses),
+  `PriceTable.from_config`, `PriceTable.origin` / `aliases` / `disabled` /
+  `sources`, `Guard(use_config=, config_path=, config=, aliases=, disable=)`,
+  `Guard.price_table`, `Guard.pricing_config`, and `Report.pricing_sources` so a
+  saved report names the config that priced it.
 - **`agentguard config` CLI.** `path`, `init`, `set`, `alias`, `remove`, `disable`,
   `enable` and `list`, with `--user` / `--project` / `--file` to choose the file.
   `agentguard pricing` now shows the *effective* table — bundled plus configured —

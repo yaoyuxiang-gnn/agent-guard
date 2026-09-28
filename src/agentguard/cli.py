@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import sys
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -35,11 +36,14 @@ from ._util import format_usd
 from ._version import __version__
 from .config import (
     CONFIG_ENV_VAR,
+    CONFIG_TRUST_ENV_VAR,
     PricingConfig,
     config_paths,
+    ignored_project_config,
     initialize_config,
     load_config,
     project_config_path,
+    project_config_trusted,
     remove_entry,
     set_alias,
     set_disabled,
@@ -51,6 +55,10 @@ from .pricing import PRICING_AS_OF, Price, PriceTable, normalize_model_key
 from .report import Report
 
 __all__ = ["main"]
+
+#: The library's "I skipped an untrusted project file" warning, matched so the CLI
+#: can replace it with a printed note rather than a stack-level warning.
+_IGNORED_CONFIG_WARNING = "agentguard is ignoring the project config"
 
 
 # --------------------------------------------------------------------------- #
@@ -275,7 +283,25 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 
 def _effective_config(*, use_config: bool) -> PricingConfig:
-    return load_config() if use_config else PricingConfig()
+    """Load config for a read-only command.
+
+    The library warns when it skips an untrusted project file; a CLI command
+    reports that in the output the user asked for instead of emitting a warning
+    they did not ask for, so the warning is suppressed here and printed as a note.
+    """
+    if not use_config:
+        return PricingConfig()
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=_IGNORED_CONFIG_WARNING, category=RuntimeWarning)
+        return load_config()
+
+
+def _print_ignored_config_note() -> None:
+    ignored = ignored_project_config()
+    if ignored is not None:
+        print()
+        print(f"  note: {ignored} exists but is not trusted, so it is not read")
+        print(f"        set {CONFIG_TRUST_ENV_VAR}=1 to use it")
 
 
 def _rows(table: PriceTable) -> list[tuple[str, Price, str]]:
@@ -310,6 +336,7 @@ def _cmd_pricing(args: argparse.Namespace) -> int:
             f"{cached:>10}  {origin}"
         )
     _print_config_extras(config)
+    _print_ignored_config_note()
     return 0
 
 
@@ -333,11 +360,13 @@ def _print_config_extras(config: PricingConfig) -> None:
 
 def _pricing_json(table: PriceTable, config: PricingConfig, model: str | None) -> int:
     """Emit the effective table as JSON, optionally narrowed to one model."""
+    ignored = ignored_project_config()
     payload: dict[str, object] = {
         "snapshot": PRICING_AS_OF,
         "aliases": dict(config.aliases),
         "disabled": sorted(config.disable),
         "config_files": [str(source) for source in config.sources],
+        "ignored_config": str(ignored) if ignored is not None else None,
         "models": [
             {"model": name, "source": origin, **price.as_dict()}
             for name, price, origin in _rows(table)
@@ -453,16 +482,18 @@ def _cmd_config_path(args: argparse.Namespace) -> int:
     user = user_config_path()
     project = project_config_path()
     explicit = (os.environ.get(CONFIG_ENV_VAR) or "").strip()
+    trusted = project_config_trusted()
+    ignored = ignored_project_config()
 
     print("config locations")
     print()
     print(f"  {'env':<8}{CONFIG_ENV_VAR}={explicit or '(not set)'}")
+    print(f"  {'trust':<8}{CONFIG_TRUST_ENV_VAR}={'set' if trusted else '(not set)'}")
     print(f"  {'user':<8}{user}{'' if user.is_file() else '  (not found)'}")
-    print(
-        f"  {'project':<8}"
-        f"{project if project is not None else str(Path.cwd() / 'agentguard.json')}"
-        f"{'' if project is not None else '  (not found)'}"
-    )
+    if project is None:
+        print(f"  {'project':<8}{Path.cwd() / 'agentguard.json'}  (not found)")
+    else:
+        print(f"  {'project':<8}{project}{'' if trusted else '  (ignored: not trusted)'}")
     print()
     active = config_paths()
     if not active:
@@ -470,6 +501,12 @@ def _cmd_config_path(args: argparse.Namespace) -> int:
     else:
         for path in active:
             print(f"  reading: {path}")
+    if ignored is not None:
+        print()
+        print(f"  ! {ignored} was not read: a config file inside a source tree")
+        print("    travels with that repository, so it could reprice models or")
+        print("    disable them without you noticing. Ask for it explicitly:")
+        print(f"      set {CONFIG_TRUST_ENV_VAR}=1   (or pass Guard(config_path=...))")
     return 0
 
 
@@ -490,6 +527,12 @@ def _report_write(target: Path, description: str, *, name: str, price: Price) ->
 
 def _shadow_note(name: str, price: Price, target: Path) -> str | None:
     """Explain when a freshly written entry is not what Guard will actually use."""
+    ignored = ignored_project_config()
+    if ignored is not None and target == ignored:
+        return (
+            f"this is a project config and it is not trusted, so it is not read yet; "
+            f"set {CONFIG_TRUST_ENV_VAR}=1 to use it"
+        )
     try:
         effective = load_config()
     except GuardConfigError as exc:
@@ -569,6 +612,7 @@ def _set_disabled(args: argparse.Namespace, *, disabled: bool) -> int:
 
 def _cmd_config_list(args: argparse.Namespace) -> int:
     paths = config_paths()
+    ignored = ignored_project_config()
     loaded: list[tuple[Path, PricingConfig | None, str | None]] = []
     broken = False
     for path in paths:
@@ -597,6 +641,8 @@ def _cmd_config_list(args: argparse.Namespace) -> int:
 
     if not loaded:
         print("no config file found; run `agentguard config path` to see where to put one")
+        if ignored is not None:
+            print(f"note: {ignored} exists but is not trusted, so it is not read")
         return 0
 
     for index, (path, config, error) in enumerate(loaded):
@@ -632,6 +678,9 @@ def _cmd_config_list(args: argparse.Namespace) -> int:
             print("  disabled (counted as unpriced)")
             for name in sorted(config.disable):
                 print(f"    {name}")
+    if ignored is not None:
+        print()
+        print(f"note: {ignored} exists but is not trusted, so it is not read")
     return 1 if broken else 0
 
 

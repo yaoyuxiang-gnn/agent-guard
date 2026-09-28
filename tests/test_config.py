@@ -12,20 +12,25 @@ import json
 import os
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
 from agentguard import DEFAULT_PRICING, Guard, GuardConfigError, Price, PriceTable, Report
+from agentguard import config as config_module
 from agentguard.config import (
     CONFIG_ENV_VAR,
+    CONFIG_TRUST_ENV_VAR,
     CONFIG_VERSION,
     Removal,
     config_paths,
+    ignored_project_config,
     initialize_config,
     load_config,
     merge_configs,
     parse_config,
     project_config_path,
+    project_config_trusted,
     read_config_file,
     remove_entry,
     set_alias,
@@ -61,14 +66,19 @@ class ConfigTestCase(unittest.TestCase):
     def project_file(self) -> Path:
         return self.root / PROJECT_FILE
 
-    def discover(self, *, start: Path | None = None, **env: str):
-        """Load config the way Guard does, with the world confined to ``root``.
+    def env(self, **extra: str) -> dict[str, str]:
+        """The environment discovery sees, with the world confined to ``root``.
 
-        ``windows=True`` keeps the per-user path deterministic on any platform:
-        it resolves to ``%APPDATA%``, which is pinned to the temporary directory.
+        ``windows=True`` keeps the per-user path deterministic on any platform: it
+        resolves to ``%APPDATA%``, which is pinned to the temporary directory. The
+        project file is trusted here because most of this file is about *merging*;
+        :class:`ProjectConfigTrustTests` covers what happens when it is not.
         """
-        environment = {"APPDATA": str(self.root), **env}
-        return load_config(start=start, env=environment, windows=True)
+        return {"APPDATA": str(self.root), CONFIG_TRUST_ENV_VAR: "1", **extra}
+
+    def discover(self, *, start: Path | None = None, **env: str):
+        """Load config the way Guard does, with the project file trusted."""
+        return load_config(start=start, env=self.env(**env), windows=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -445,6 +455,103 @@ class EditTests(ConfigTestCase):
         path.write_text("{oops", encoding="utf-8")
         with self.assertRaises(GuardConfigError):
             read_config_file(path)
+
+
+class ProjectConfigTrustTests(ConfigTestCase):
+    """A config that travels with a repository is data from someone else.
+
+    Reading it by default would make "check out this repo and run your agent in
+    it" a documented way to reprice every model or disable the expensive ones,
+    which is a budget bypass performed with a JSON file.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.project_file, {"models": {"from-project": [1.0, 2.0]}})
+        # The once-per-process dedupe would hide the warning from later tests.
+        self.addCleanup(setattr, config_module, "_warned_untrusted", set())
+        config_module._warned_untrusted.clear()
+
+    def test_project_file_is_skipped_and_reported(self) -> None:
+        with self.assertWarns(RuntimeWarning) as caught:
+            config = load_config(
+                start=self.root, env=self.env(**{CONFIG_TRUST_ENV_VAR: ""}), windows=True
+            )
+        self.assertTrue(config.is_empty)
+        self.assertIn(str(self.project_file), str(caught.warning))
+        self.assertIn(CONFIG_TRUST_ENV_VAR, str(caught.warning))
+
+    def test_the_warning_fires_once_per_file(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            for _ in range(3):
+                load_config(
+                    start=self.root, env=self.env(**{CONFIG_TRUST_ENV_VAR: ""}), windows=True
+                )
+        self.assertEqual(len(caught), 1)
+
+    def test_trusted_project_file_is_read(self) -> None:
+        config = load_config(start=self.root, env=self.env(), windows=True)
+        self.assertIn("from-project", config.models)
+
+    def test_user_file_is_still_read_while_the_project_file_is_ignored(self) -> None:
+        write_json(self.user_file, {"models": {"from-user": [3.0, 3.0]}})
+        with self.assertWarns(RuntimeWarning):
+            config = load_config(
+                start=self.root, env=self.env(**{CONFIG_TRUST_ENV_VAR: ""}), windows=True
+            )
+        self.assertEqual(set(config.models), {"from-user"})
+
+    def test_no_warning_when_there_is_no_project_file(self) -> None:
+        self.project_file.unlink()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            load_config(start=self.root, env=self.env(**{CONFIG_TRUST_ENV_VAR: ""}), windows=True)
+        self.assertEqual(caught, [])
+
+    def test_env_var_pointing_at_the_project_file_needs_no_trust(self) -> None:
+        config = load_config(
+            start=self.root,
+            env=self.env(**{CONFIG_TRUST_ENV_VAR: "", CONFIG_ENV_VAR: str(self.project_file)}),
+            windows=True,
+        )
+        self.assertIn("from-project", config.models)
+
+    def test_guard_can_be_pointed_at_it_explicitly(self) -> None:
+        guard = Guard(max_usd=1.0, config_path=self.project_file)
+        self.assertEqual(guard.price_table.origin("from-project"), "config")
+
+    def test_guard_ignores_it_by_default(self) -> None:
+        # Guard() reads os.environ, so the whole environment is pinned here rather
+        # than passed in: cwd inside the project, no explicit path, no trust.
+        nested = self.root / "sub"
+        nested.mkdir()
+        original = Path.cwd()
+        os.chdir(nested)
+        self.addCleanup(os.chdir, original)
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"APPDATA": str(self.root), CONFIG_ENV_VAR: "", CONFIG_TRUST_ENV_VAR: ""},
+            ),
+            self.assertWarns(RuntimeWarning),
+        ):
+            guard = Guard(max_usd=1.0)
+        self.assertIsNone(guard.price_table.origin("from-project"))
+
+    def test_ignored_project_config_helper(self) -> None:
+        self.assertIsNotNone(
+            ignored_project_config(start=self.root, env=self.env(**{CONFIG_TRUST_ENV_VAR: ""}))
+        )
+        self.assertIsNone(ignored_project_config(start=self.root, env=self.env()))
+
+    def test_truthy_spellings_are_accepted(self) -> None:
+        for value in ("1", "true", "YES", "on"):
+            with self.subTest(value=value):
+                self.assertTrue(project_config_trusted(env={CONFIG_TRUST_ENV_VAR: value}))
+        for value in ("", "0", "no", "maybe"):
+            with self.subTest(value=value):
+                self.assertFalse(project_config_trusted(env={CONFIG_TRUST_ENV_VAR: value}))
 
 
 # --------------------------------------------------------------------------- #

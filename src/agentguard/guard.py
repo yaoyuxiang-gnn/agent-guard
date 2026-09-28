@@ -191,7 +191,10 @@ class Guard:
         of building one. Config discovery is skipped when this is passed.
     :param use_config: Read the user's ``agentguard.json`` /
         ``$AGENTGUARD_CONFIG`` pricing config (default ``True``). Set ``False`` to
-        use only the bundled table and this constructor's arguments.
+        use only the bundled table and this constructor's arguments. A config file
+        inside the project tree is only read when
+        ``$AGENTGUARD_TRUST_PROJECT_CONFIG=1`` is set, because it travels with the
+        repository rather than with you.
     :param config_path: Load exactly this config file instead of discovering one.
     :param config: A prebuilt :class:`~agentguard.PricingConfig`, bypassing
         discovery. ``Guard(pricing=...)`` still wins over anything from a file.

@@ -38,11 +38,13 @@ from __future__ import annotations
 from ._version import __version__
 from .config import (
     CONFIG_ENV_VAR,
+    CONFIG_TRUST_ENV_VAR,
     PricingConfig,
     config_paths,
     initialize_config,
     load_config,
     parse_config,
+    project_config_trusted,
     remove_entry,
     set_alias,
     set_disabled,
@@ -110,10 +112,12 @@ __all__ = [
     # pricing config
     "PricingConfig",
     "CONFIG_ENV_VAR",
+    "CONFIG_TRUST_ENV_VAR",
     "load_config",
     "parse_config",
     "config_paths",
     "initialize_config",
+    "project_config_trusted",
     "set_model_price",
     "set_alias",
     "set_disabled",

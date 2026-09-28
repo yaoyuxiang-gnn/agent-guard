@@ -35,15 +35,24 @@ Three keys, three questions:
     rather than wrong, which is the honest outcome: it is reported, counted, and
     excluded from the budget.
 
-The file is found in this order, and the first match wins:
+The file is found in this order:
 
 1. ``$AGENTGUARD_CONFIG`` — an explicit path. Set it to ``none`` (or ``off``,
    ``0``, ``false``, ``no``) to ignore every config file.
-2. ``agentguard.json`` (or ``.agentguard.json``) in the working directory or the
-   nearest parent — the project-level file.
-3. ``%APPDATA%\\agentguard\\pricing.json`` on Windows,
+2. ``%APPDATA%\\agentguard\\pricing.json`` on Windows,
    ``$XDG_CONFIG_HOME/agentguard/pricing.json`` (default ``~/.config/...``)
-   elsewhere — the per-user file.
+   elsewhere — the per-user file, always read.
+3. ``agentguard.json`` (or ``.agentguard.json``) in the working directory or the
+   nearest parent — the project-level file, read **only when explicitly trusted**
+   with ``$AGENTGUARD_TRUST_PROJECT_CONFIG=1`` (see below).
+
+A project-level file travels with the repository it sits in, so it is written by
+whoever wrote that repository. Reading it by default would make "clone this repo
+and run your agent in it" a documented way to reprice every model to nearly
+nothing, or to ``disable`` the expensive ones so their calls stop counting against
+the budget — a guard bypass performed with a data file. So it is skipped unless
+:func:`project_config_trusted` says otherwise, and a skipped file is reported once
+per process rather than silently ignored.
 
 ``Guard`` picks this up automatically; ``Guard(use_config=False)`` opts out, and
 anything passed to ``Guard(pricing=...)`` in code still wins over the file. The
@@ -61,6 +70,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import warnings
 from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -78,15 +88,18 @@ from .pricing import (
 __all__ = [
     "CONFIG_ENV_VAR",
     "CONFIG_FILENAMES",
+    "CONFIG_TRUST_ENV_VAR",
     "CONFIG_VERSION",
     "PricingConfig",
     "Removal",
     "config_paths",
+    "ignored_project_config",
     "initialize_config",
     "load_config",
     "merge_configs",
     "parse_config",
     "project_config_path",
+    "project_config_trusted",
     "read_config_file",
     "remove_entry",
     "set_alias",
@@ -101,6 +114,10 @@ __all__ = [
 #: to disable config loading entirely.
 CONFIG_ENV_VAR = "AGENTGUARD_CONFIG"
 
+#: Set this to a truthy value to let a config file inside the project tree be read.
+#: See :func:`project_config_trusted`.
+CONFIG_TRUST_ENV_VAR = "AGENTGUARD_TRUST_PROJECT_CONFIG"
+
 #: Schema version written by the CLI and understood by this module.
 CONFIG_VERSION = 1
 
@@ -109,6 +126,12 @@ CONFIG_FILENAMES = ("agentguard.json", ".agentguard.json")
 
 #: Values of :data:`CONFIG_ENV_VAR` that mean "load no config file at all".
 _OFF_VALUES = frozenset({"none", "off", "0", "false", "no", "disable", "disabled"})
+
+#: Values of :data:`CONFIG_TRUST_ENV_VAR` that mean "yes, read the project file".
+_TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
+
+#: Project configs already reported as ignored, so the warning fires once each.
+_warned_untrusted: set[str] = set()
 
 _TOP_LEVEL_KEYS = ("version", "models", "aliases", "disable")
 
@@ -428,6 +451,45 @@ def _explicit_path(environ: Mapping[str, str]) -> Path | _Off | None:
     return Path(raw).expanduser()
 
 
+def project_config_trusted(*, env: Mapping[str, str] | None = None) -> bool:
+    """Whether a config file inside the project tree may be read.
+
+    >>> project_config_trusted(env={CONFIG_TRUST_ENV_VAR: "1"})
+    True
+    >>> project_config_trusted(env={})
+    False
+    """
+    environ = os.environ if env is None else env
+    return (environ.get(CONFIG_TRUST_ENV_VAR) or "").strip().lower() in _TRUTHY_VALUES
+
+
+def ignored_project_config(
+    *, start: str | Path | None = None, env: Mapping[str, str] | None = None
+) -> Path | None:
+    """The project config that exists but is not trusted, if any."""
+    environ = os.environ if env is None else env
+    if _explicit_path(environ) is not None or project_config_trusted(env=environ):
+        return None
+    return project_config_path(start)
+
+
+def _warn_ignored_project_config(path: Path) -> None:
+    """Say once, loudly, that a file that looks like config was not read."""
+    key = str(path)
+    if key in _warned_untrusted:
+        return
+    _warned_untrusted.add(key)
+    warnings.warn(
+        f"agentguard is ignoring the project config at {path}: a config file inside "
+        f"a source tree is written by whoever wrote that repository, so it could "
+        f"lower prices or disable models and quietly weaken the budget. Set "
+        f"{CONFIG_TRUST_ENV_VAR}=1 to use it, or pass Guard(config_path=...). "
+        f"Bundled prices are in effect.",
+        RuntimeWarning,
+        stacklevel=4,
+    )
+
+
 def config_paths(
     *,
     start: str | Path | None = None,
@@ -440,6 +502,11 @@ def config_paths(
     this file", not "also read this file". Setting it to ``none``/``off``/``0``
     disables config loading. An explicit path that does not exist yields ``()``;
     :func:`load_config` is the one that turns that into an error.
+
+    The per-user file is always read. A file found in the project tree is not,
+    unless :func:`project_config_trusted` says so: it travels with the repository,
+    so reading it by default would let whoever wrote the repository reprice the
+    models this guard bills.
 
     >>> config_paths(env={CONFIG_ENV_VAR: "none"})
     ()
@@ -456,7 +523,7 @@ def config_paths(
     if user.is_file():
         found.append(user)
     project = project_config_path(start)
-    if project is not None and project != user:
+    if project is not None and project != user and project_config_trusted(env=environ):
         found.append(project)
     return tuple(found)
 
@@ -472,7 +539,8 @@ def load_config(
 
     Returns an empty (but valid) :class:`PricingConfig` when nothing is
     configured. Raises :class:`~agentguard.GuardConfigError` when a file was
-    explicitly requested and is missing, or when any file is malformed.
+    explicitly requested and is missing, or when any file is malformed. A
+    project-level file that exists but is not trusted is skipped, with a warning.
 
     >>> load_config(env={CONFIG_ENV_VAR: "off"}).is_empty
     True
@@ -487,6 +555,9 @@ def load_config(
     if isinstance(explicit, Path):
         return _finalize([_load_file(explicit, required=True)])
 
+    ignored = ignored_project_config(start=start, env=environ)
+    if ignored is not None:
+        _warn_ignored_project_config(ignored)
     return _finalize(
         [
             _load_file(candidate, required=False)

@@ -30,6 +30,26 @@ These do **not** count:
   configurable.
 - Pre-flight input-token estimates being imprecise. This is documented behaviour.
 
+## Configuration trust
+
+Prices can be configured by a JSON file (see the README). That makes the file part
+of the threat model, because a file that can lower a price or `disable` a model can
+weaken the budget:
+
+- A config in **your own** config directory, or one named by `$AGENTGUARD_CONFIG`,
+  is yours and is read as-is.
+- A config found in the **project tree** (`agentguard.json` in the working
+  directory or a parent) travels with the repository, so it is written by whoever
+  wrote that repository. It is **not** read unless you set
+  `$AGENTGUARD_TRUST_PROJECT_CONFIG=1`, and skipping it is reported once per
+  process. Otherwise "clone this repository and run your agent in it" would be a
+  documented way to reprice the guard's models or disable its caps without
+  touching your code. That would be a guard bypass, and guard bypasses are the
+  most serious class of bug in this project.
+
+A malformed config file fails at `Guard` construction and names the file; it can
+stop an agent from starting, but it cannot silently make a limit weaker.
+
 ## Supported versions
 
 The latest released minor version receives security fixes. This project is 0.x, so

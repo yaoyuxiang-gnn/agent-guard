@@ -361,13 +361,13 @@ $ agentguard config disable gpt-4          # do not trust this bundled price
 | `aliases` | *What is this name really?* Matched against the reported model string exactly, before any other interpretation — so `acme/fast` can point at a model that has a price. |
 | `disable` | *Which bundled prices do I not trust?* A disabled model becomes **unpriced**: counted, reported, and excluded from the budget rather than billed at a number you rejected. |
 
-The file is found in this order, first match wins:
+The file is found in this order:
 
 1. `$AGENTGUARD_CONFIG` — an explicit path (`none`/`off`/`0` disables config entirely)
-2. `agentguard.json` or `.agentguard.json` in the working directory or the nearest parent
-3. `%APPDATA%\agentguard\pricing.json` on Windows, `$XDG_CONFIG_HOME/agentguard/pricing.json` (default `~/.config/...`) elsewhere
+2. `%APPDATA%\agentguard\pricing.json` on Windows, `$XDG_CONFIG_HOME/agentguard/pricing.json` (default `~/.config/...`) elsewhere — your own file, always read
+3. `agentguard.json` or `.agentguard.json` in the working directory or the nearest parent — a **project** file, read only when you trust it with `AGENTGUARD_TRUST_PROJECT_CONFIG=1`
 
-Everything is overridable in code too, and code always wins over the file:
+That third one is deliberate. A project file travels with the repository it sits in, so it is written by whoever wrote that repository — and reading it by default would make "clone this repo and run your agent in it" a way to reprice every model to nearly nothing, or `disable` the expensive ones so their calls stop counting against the budget. So it is skipped unless you ask (`agentguard config path` shows what is in effect and what was skipped, and skipping is reported once per process). Everything is overridable in code too, and code always wins over any file:
 
 ```python
 from agentguard import Guard, Price
@@ -422,7 +422,7 @@ $ agentguard report run.json --json
 $ agentguard pricing gpt-4o
 $ agentguard pricing                 # effective table, with a source per model
 $ agentguard pricing --no-config     # bundled prices only
-$ agentguard config path             # where config is read from
+$ agentguard config path             # where config is read from, and what is ignored
 $ agentguard config init             # write a starter file
 $ agentguard config set NAME IN OUT [--cached C]
 $ agentguard config alias NAME TARGET

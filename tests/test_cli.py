@@ -13,7 +13,7 @@ from unittest import mock
 
 from agentguard import Guard
 from agentguard.cli import main
-from agentguard.config import CONFIG_ENV_VAR, user_config_path
+from agentguard.config import CONFIG_ENV_VAR, CONFIG_TRUST_ENV_VAR, user_config_path
 
 
 def run_cli(*argv: str) -> tuple[int, str, str]:
@@ -274,6 +274,75 @@ class ConfigCommandTests(unittest.TestCase):
             code, _, err = run_cli("config", "set", "my-ft", "3", "12")
         self.assertEqual(code, 0)
         self.assertIn("not in effect", err)
+
+
+class ProjectConfigTrustCliTests(unittest.TestCase):
+    """A project config is somebody else's data until you say otherwise."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+        self.env = mock.patch.dict(
+            os.environ,
+            {
+                "APPDATA": str(self.dir),
+                "XDG_CONFIG_HOME": str(self.dir),
+                "HOME": str(self.dir),
+                CONFIG_ENV_VAR: "",
+                CONFIG_TRUST_ENV_VAR: "",
+            },
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.original_cwd = Path.cwd()
+        os.chdir(self.dir)
+        self.addCleanup(os.chdir, self.original_cwd)
+        self.project = self.dir / "agentguard.json"
+        self.project.write_text(
+            json.dumps({"version": 1, "models": {"from-project": [1.0, 2.0]}}), encoding="utf-8"
+        )
+
+    def test_path_marks_the_project_file_as_ignored(self) -> None:
+        code, out, _ = run_cli("config", "path")
+        self.assertEqual(code, 0)
+        self.assertIn("ignored: not trusted", out)
+        self.assertIn(CONFIG_TRUST_ENV_VAR, out)
+
+    def test_pricing_does_not_use_an_untrusted_project_file(self) -> None:
+        code, out, _ = run_cli("pricing", "--json")
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertNotIn("from-project", {row["model"] for row in payload["models"]})
+        self.assertEqual(payload["config_files"], [])
+        self.assertEqual(payload["ignored_config"], str(self.project))
+
+    def test_pricing_prints_a_note_instead_of_a_warning(self) -> None:
+        code, out, err = run_cli("pricing")
+        self.assertEqual(code, 0)
+        self.assertIn("not trusted", out)
+        self.assertIn(CONFIG_TRUST_ENV_VAR, out)
+        self.assertEqual(err, "")
+
+    def test_list_mentions_the_file_it_is_not_reading(self) -> None:
+        code, out, _ = run_cli("config", "list")
+        self.assertEqual(code, 0)
+        self.assertIn("not trusted", out)
+
+    def test_writing_a_project_config_says_it_needs_trust(self) -> None:
+        code, _, err = run_cli("config", "set", "--project", "my-ft", "3", "12")
+        self.assertEqual(code, 0)
+        self.assertIn("not trusted", err)
+        self.assertIn(CONFIG_TRUST_ENV_VAR, err)
+
+    def test_trusting_it_makes_it_effective(self) -> None:
+        with mock.patch.dict(os.environ, {CONFIG_TRUST_ENV_VAR: "1"}):
+            code, out, _ = run_cli("pricing", "--json")
+            self.assertEqual(code, 0)
+            payload = json.loads(out)
+            models = {row["model"]: row for row in payload["models"]}
+            self.assertEqual(models["from-project"]["source"], "config")
+            self.assertEqual(payload["config_files"], [str(self.project)])
 
 
 class ConfiguredPricingTests(unittest.TestCase):

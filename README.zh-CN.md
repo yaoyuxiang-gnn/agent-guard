@@ -330,13 +330,13 @@ $ agentguard config disable gpt-4          # 这条内置价格我不信
 | `aliases` | *这个名字到底是什么？* 按上报的模型名精确匹配（不区分大小写），且在其他任何解析之前生效——所以 `acme/fast` 可以指向一个有价格的模型。 |
 | `disable` | *哪些内置价格我不信？* 被禁用的模型变成 **unpriced**：照常计数、照常上报、但不计入预算，而不是按一个你已经否定的数字计费。 |
 
-文件按以下顺序查找，先命中者生效：
+文件按以下顺序查找：
 
 1. `$AGENTGUARD_CONFIG` —— 显式路径（设为 `none` / `off` / `0` 则完全关闭配置）
-2. 当前目录或最近的上级目录里的 `agentguard.json` 或 `.agentguard.json`
-3. Windows 上是 `%APPDATA%\agentguard\pricing.json`，其他平台是 `$XDG_CONFIG_HOME/agentguard/pricing.json`（默认 `~/.config/...`）
+2. Windows 上是 `%APPDATA%\agentguard\pricing.json`，其他平台是 `$XDG_CONFIG_HOME/agentguard/pricing.json`（默认 `~/.config/...`）—— 你自己的文件，始终读取
+3. 当前目录或最近的上级目录里的 `agentguard.json` 或 `.agentguard.json` —— **项目级**文件，只有在你用 `AGENTGUARD_TRUST_PROJECT_CONFIG=1` 明确信任它时才读取
 
-同样的东西也可以在代码里给，并且**代码始终优先于文件**：
+第三条是刻意的。项目级文件跟着仓库走，也就是说它由写这个仓库的人决定内容——如果默认读取，那么"clone 一个仓库并在里面跑你的 agent"就成了把每个模型价格改成接近 0、或者把贵模型 `disable` 掉（使其调用不再计入预算）的途径。所以它默认被跳过，除非你明确要求（`agentguard config path` 会显示什么是生效的、什么被跳过了；每次进程内跳过都会提示一次）。同样的东西也可以在代码里给，并且**代码始终优先于任何文件**：
 
 ```python
 from agentguard import Guard, Price
@@ -385,7 +385,7 @@ $ agentguard report run.json --json
 $ agentguard pricing gpt-4o
 $ agentguard pricing                 # 生效表，每个模型标注来源
 $ agentguard pricing --no-config     # 只看内置价格
-$ agentguard config path             # 配置从哪里读
+$ agentguard config path             # 配置从哪里读，以及什么被忽略了
 $ agentguard config init             # 生成一个起始文件
 $ agentguard config set NAME IN OUT [--cached C]
 $ agentguard config alias NAME TARGET
