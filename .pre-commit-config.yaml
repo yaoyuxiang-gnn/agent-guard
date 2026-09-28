@@ -1,0 +1,33 @@
+# Optional. The test suite needs no install; these hooks just keep the tree tidy
+# before a commit. Enable with:  pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # The suite runs on a bare interpreter, so this hook has no language
+      # dependency to install and stays fast.
+      - id: unit-tests
+        name: unit tests (stdlib only)
+        entry: python -m unittest discover -s tests -t .
+        language: system
+        pass_filenames: false
+        types: [python]
