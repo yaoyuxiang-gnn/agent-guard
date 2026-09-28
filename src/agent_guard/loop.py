@@ -41,8 +41,9 @@ from __future__ import annotations
 
 import difflib
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 from ._util import stable_json
 from .exceptions import GuardConfigError

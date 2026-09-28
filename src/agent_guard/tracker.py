@@ -12,8 +12,9 @@ from __future__ import annotations
 import threading
 import time
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 from .pricing import Price, PriceTable
 
@@ -253,12 +254,12 @@ class CostTracker:
     """
 
     __slots__ = (
+        "_default_price",
         "_lock",
+        "_models_warned",
+        "_on_unknown_model",
         "_records",
         "_table",
-        "_default_price",
-        "_on_unknown_model",
-        "_models_warned",
         "_unpriced_calls",
     )
 

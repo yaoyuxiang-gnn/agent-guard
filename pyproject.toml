@@ -109,7 +109,16 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = [
+    # Line length is the formatter's job, not the linter's.
+    "E501",
+    # `__all__` is hand-curated and ordered by purpose -- core API, errors, loop
+    # detectors, accounting, reporting -- rather than alphabetically. Sorting it
+    # would scatter related names and make the public surface harder to read than
+    # the rule is worth. Delete this line and run `ruff check --fix .` if you
+    # would rather have the sorted form; ruff applies its own ordering correctly.
+    "RUF022",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]

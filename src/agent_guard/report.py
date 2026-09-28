@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from ._util import format_duration, format_percent, format_tokens, format_usd
 from .loop import LoopVerdict
@@ -240,7 +241,7 @@ class Report:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Report":
+    def from_dict(cls, data: Mapping[str, Any]) -> Report:
         """Rebuild a report from :meth:`as_dict` output.
 
         This is what lets the ``agent-guard report`` CLI render a JSON file that
