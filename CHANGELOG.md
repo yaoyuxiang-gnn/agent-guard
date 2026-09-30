@@ -7,9 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
 
-## [0.2.1] - 2026-09-28
+- **`Guard.snapshot()`: checkpoint a run's spend, and resume from it.** An agent
+  that already checkpoints its own state can now checkpoint its budget too, so a
+  resumed run keeps counting against what it already spent instead of starting
+  from zero:
+
+  ```python
+  write_checkpoint({"cursor": 41, "guard": guard.snapshot()})
+
+  # later, in a new process
+  guard = Guard.from_snapshot(read_checkpoint()["guard"], max_usd=5.0)
+  guard.remaining_usd      # what is actually left, not the full budget
+  ```
+
+  New: `Guard.snapshot()` / `as_snapshot()` / `restore()` / `Guard.from_snapshot()`,
+  `CostTracker.get_state()` / `.restore()` / `.set_state()`, `Detector.get_state()` /
+  `.set_state()` on all four built-in detectors, `LoopMonitor.get_states()` /
+  `.set_states()`, `Report.checkpointed_calls`, and `agentguard.tracker.SNAPSHOT_VERSION`.
+
+  The format is **counters, not records**: calls are grouped by
+  `(model, tag, tool)`, so `by_model`, `by_tag` and `by_tool` all survive exactly
+  and the per-call log does not. That is a size decision a checkpoint written every
+  loop iteration forces — and it is why a restored report says
+  `includes N call(s) restored from a checkpoint` rather than presenting inherited
+  numbers as its own observations. Per-call costs in a restored run are their
+  group's average, which is all a checkpoint knows.
+
+  Three decisions worth naming:
+
+  - **Detector windows survive; wall-clock time does not.** A loop that spans a
+    checkpoint is still a loop, so the four built-in detectors serialise their
+    sliding windows. `max_seconds` is not restored, because it caps how long *this
+    process* may run and restoring an elapsed duration would make a resumed run
+    trip on time it never spent. Money and steps accumulate; the clock restarts.
+  - **A custom detector without `get_state` does not block the restore.** Its
+    history is recorded as `null`, the budget still restores, and the guard warns
+    once that a loop beginning before the checkpoint may need more observations.
+    Refusing a budget over a detector would be the wrong trade.
+  - **An unreadable checkpoint is refused, never half-applied.** A wrong format
+    version, a negative count, a cost on a fully unpriced group or a call count
+    that disagrees with its groups all raise `GuardConfigError` at restore, and the
+    guard is left untouched — a budget that restores *approximately* is a budget
+    that might not stop.
+
+  Unpriced models stay unpriced through a round trip (`cost_usd=None`), so
+  restoring can never turn forgotten money into budget headroom.
+- **`examples/checkpointing.py`**, which resumes a run mid-flight and shows the
+  carried-over report.
+
+### Changed
+
+- **The bundled price table was reviewed against current list prices.** The
+  snapshot was nine months old (`2026-01`), and a model the table does not know is
+  reported as *unpriced* and **excluded from the budget** — which is the safe
+  behaviour, and also means a cap on a current model never fires. The table now
+  carries 119 entries (from 41) and is dated `2026-09`, read from each provider's
+  own pricing page and cross-checked against
+  `https://openrouter.ai/api/v1/models`, with the provider's page winning where the
+  two disagree.
+
+  Added, one current family per provider at least: OpenAI `gpt-6-astra` /
+  `gpt-6-sol` / `gpt-6.1-sol` / `gpt-6-luna`, the `gpt-5.1`–`gpt-5.6` line
+  (including `gpt-5.6-cyber`) and `gpt-oss-120b` / `gpt-oss-20b`; Anthropic
+  `claude-fable-5` / `-5.1`, `claude-mythos-5` / `-5.1`, `claude-opus-5` through
+  `claude-opus-5.5`, `claude-sonnet-5` / `-5.5` and `claude-haiku-4.5`; Google
+  `gemini-3` and `gemini-3.1`–`gemini-3.8`; DeepSeek `deepseek-v3.1` through
+  `deepseek-v4-pro`; Mistral `mistral-medium-3.5`, `devstral` and the `ministral`
+  line; xAI `grok-4.3` through `grok-4.7` and `grok-4.20`; the Qwen `qwen3.7` /
+  `qwen3.8` families.
+
+  Corrected: `gemini-2.5-pro` cached (0.31 → 0.125), `gemini-2.5-flash` cached
+  (0.075 → 0.03), `deepseek-chat` (0.27/1.10 → 0.2574/1.0287), `mistral-small`
+  (0.20/0.60 → 0.15/0.60), `qwen-plus` (0.40/1.20 → 0.26/0.78),
+  `gpt-5.6-sol` (2.00/10.00 → 4.00/20.00, its published cyber-model rate), and the
+  `mistral-large` / `codestral` cached rates, which were previously absent.
+
+  Both spellings of a dotted version are listed where providers disagree —
+  Anthropic's own model ids are dash-dated (`claude-haiku-4-5-20251001`) while the
+  rate catalogues write `claude-haiku-4.5` — because normalization keeps the two
+  apart and one spelling would otherwise resolve to nothing.
+
+  **Retired models keep their last published price rather than being dropped.**
+  Several entries are withdrawn, closed to new callers, or no longer listed at all
+  (`grok-3`, `grok-4`, `deepseek-chat`, `deepseek-reasoner`, `gemini-2.0-flash`, the
+  `claude-3-*` line, `gpt-4o`/`gpt-4.1`/`o3`/`o4-mini`, which OpenAI has scheduled
+  for shutdown in late 2026). Removing a name is not neutral: it silently turns
+  every call to that model *unpriced*, which excludes the spend from the budget —
+  the opposite of what someone still running it needs. A stale number is a smaller
+  error than a disabled cap. Two entries could not be read from a provider page and
+  say so in the source: `claude-sonnet-5` (Anthropic prints its cache rate but
+  leaves input/output blank; the base rate follows from Anthropic's documented 0.1x
+  cache multiplier and two independent catalogues agreeing) and the `grok-4`/
+  `grok-3` rates (their slugs now bill at `grok-4.3` rates after the 2026-05-15
+  retirement).
+
+  Nothing about *how* the table is used changed: an unknown model is still reported
+  unpriced rather than guessed at, and `agentguard config set` still overrides any
+  entry.
+- **The price table now has tests that a refresh has to keep passing.** Every entry
+  must resolve to itself, no two names may collapse onto one key after
+  normalization, a cached rate may never exceed the fresh-input rate, and a set of
+  long-standing families plus one current model per provider must stay priced. Two
+  of these caught real mistakes while writing this table — a dash/dot mismatch and a
+  cached rate above its input rate. The CLI test that asserted a hardcoded
+  `"41 models bundled"` now derives the count, so a refresh no longer fails a test
+  that says nothing about whether the CLI is correct.
+
+### Fixed
+
+- **The Chinese README's hero image was a relative path**, so it did not render
+  from the repository's rendered view the way the English one does. It is an
+  absolute URL now, like every link in `README.md`.
+
+## [0.2.1] - 2026-09-30
 
 ### Fixed
 

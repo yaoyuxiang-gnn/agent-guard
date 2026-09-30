@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import difflib
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -151,6 +151,36 @@ class Detector:
         """Clear accumulated state. Called when a guard is reused."""
         return None
 
+    def get_state(self) -> dict[str, Any]:
+        """Return this detector's sliding windows as JSON-friendly data.
+
+        Used by :meth:`agentguard.Guard.snapshot`, so a checkpointed run resumes
+        with the observations it had already seen. A loop that spans a checkpoint
+        is still a loop, and forgetting the window would let it start over.
+
+        The default raises :class:`NotImplementedError` rather than returning
+        ``{}``, because a custom detector that silently reported "no state" would
+        look checkpointed while losing the very history it exists to keep. The
+        guard skips detectors that do not implement this, and warns once.
+
+        >>> RepeatDetector(max_repeats=2, window=4).get_state()
+        {'recent': []}
+        """
+        raise NotImplementedError
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        """Restore state previously produced by :meth:`get_state`.
+
+        The inverse of :meth:`get_state`, and optional in the same way: a
+        detector that cannot be restored raises rather than pretending.
+
+        >>> detector = RepeatDetector(max_repeats=2, window=4)
+        >>> detector.set_state({"recent": ["a", "a"]})
+        >>> detector.observe("a", 3).kind
+        'repeat'
+        """
+        raise NotImplementedError
+
 
 class RepeatDetector(Detector):
     """Trip when the identical call repeats too often inside a sliding window.
@@ -194,6 +224,23 @@ class RepeatDetector(Detector):
 
     def reset(self) -> None:
         self._recent.clear()
+
+    def get_state(self) -> dict[str, Any]:
+        """The sliding window of signatures, oldest first.
+
+        >>> detector = RepeatDetector(max_repeats=2, window=4)
+        >>> _ = detector.observe("a", 1)
+        >>> detector.get_state()
+        {'recent': ['a']}
+        """
+        return {"recent": list(self._recent)}
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        recent = state.get("recent") or []
+        self._recent.clear()
+        # Re-append through the deque so maxlen still governs, and a hand-written
+        # state file cannot grow the window past what this detector was built for.
+        self._recent.extend(str(item) for item in recent)
 
 
 class CycleDetector(Detector):
@@ -267,6 +314,15 @@ class CycleDetector(Detector):
     def reset(self) -> None:
         self._recent.clear()
 
+    def get_state(self) -> dict[str, Any]:
+        """The sliding window of signatures, oldest first."""
+        return {"recent": list(self._recent)}
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        recent = state.get("recent") or []
+        self._recent.clear()
+        self._recent.extend(str(item) for item in recent)
+
 
 class SimilarityDetector(Detector):
     """Trip on *near*-duplicate calls that differ only trivially.
@@ -337,6 +393,15 @@ class SimilarityDetector(Detector):
     def reset(self) -> None:
         self._recent.clear()
 
+    def get_state(self) -> dict[str, Any]:
+        """The window of compared signatures, oldest first."""
+        return {"recent": list(self._recent)}
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        recent = state.get("recent") or []
+        self._recent.clear()
+        self._recent.extend(str(item) for item in recent)
+
 
 class NoProgressDetector(Detector):
     """Trip when an explicitly reported progress marker stops changing.
@@ -384,6 +449,28 @@ class NoProgressDetector(Detector):
         self._last = None
         self._same = 0
 
+    def get_state(self) -> dict[str, Any]:
+        """The last progress marker and how many times it has repeated.
+
+        >>> detector = NoProgressDetector(max_stagnant=3)
+        >>> _ = detector.observe("rows=0", 1)
+        >>> detector.get_state()
+        {'last': 'rows=0', 'same': 1}
+        """
+        return {"last": self._last, "same": self._same}
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        last = state.get("last")
+        self._last = None if last is None else str(last)
+        same = state.get("same") or 0
+        self._same = int(same)
+        # A state file claiming stagnation it never observed must not trip on the
+        # next observation alone; the count is clamped to what this detector can
+        # legitimately have accumulated, mirroring ``max_stagnant`` at the top.
+        if self._last is None:
+            self._same = 0
+        self._same = max(0, min(self._same, self.max_stagnant))
+
 
 class LoopMonitor:
     """Runs a sequence of detectors and reports the first verdict.
@@ -429,6 +516,37 @@ class LoopMonitor:
     def reset(self) -> None:
         for detector in self._detectors:
             detector.reset()
+
+    def get_states(self) -> list[dict[str, Any] | None]:
+        """One entry per detector, in order; ``None`` where state is unsupported.
+
+        A custom detector that does not implement :meth:`Detector.get_state` yields
+        ``None`` rather than an empty dict, so a checkpoint records "this detector's
+        history was *not* kept" instead of implying there was none to keep.
+        """
+        states: list[dict[str, Any] | None] = []
+        for detector in self._detectors:
+            try:
+                states.append(detector.get_state())
+            except NotImplementedError:
+                states.append(None)
+        return states
+
+    def set_states(self, states: Sequence[Mapping[str, Any] | None]) -> None:
+        """Restore per-detector state, by position.
+
+        Extra entries are ignored and missing ones leave that detector as it is:
+        the checkpoint comes from a detector list that may not match the one being
+        restored, and refusing to restore a budget over a detector-list mismatch
+        would be the wrong trade.
+        """
+        for detector, state in zip(self._detectors, states, strict=False):
+            if state is None:
+                continue
+            try:
+                detector.set_state(state)
+            except NotImplementedError:
+                continue
 
 
 def default_detectors() -> list[Detector]:

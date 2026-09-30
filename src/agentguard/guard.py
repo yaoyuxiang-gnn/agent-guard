@@ -61,7 +61,14 @@ from .loop import (
 )
 from .pricing import Price, PriceTable
 from .report import Report, build_limits
-from .tracker import CallRecord, CostTracker, Usage, extract_model, extract_usage
+from .tracker import (
+    SNAPSHOT_VERSION,
+    CallRecord,
+    CostTracker,
+    Usage,
+    extract_model,
+    extract_usage,
+)
 
 __all__ = ["Guard", "Step", "current_guard"]
 
@@ -221,6 +228,7 @@ class Guard:
 
     __slots__ = (
         "_action_monitor",
+        "_checkpointed_calls",
         "_clock",
         "_created_at",
         "_default_price",
@@ -235,10 +243,12 @@ class Guard:
         "_on_unknown_model",
         "_pricing_config",
         "_progress_monitor",
+        "_skipped_detectors",
         "_steps",
         "_tracker",
         "_tripped",
         "_warned_empty",
+        "_warned_skipped_detectors",
     )
 
     def __init__(
@@ -288,6 +298,12 @@ class Guard:
         self._default_price = default_price
         self._tripped: GuardTripped | None = None
         self._warned_empty = False
+        # Calls this run was handed by a restored checkpoint, and the detectors
+        # whose history a checkpoint could not carry. Both exist so the report can
+        # say what it did not observe instead of implying it observed everything.
+        self._checkpointed_calls = 0
+        self._skipped_detectors = 0
+        self._warned_skipped_detectors = False
 
         if price_table is not None:
             # A prebuilt table is the caller's complete answer to "what do things
@@ -371,6 +387,9 @@ class Guard:
             self._steps = 0
             self._tripped = None
             self._warned_empty = False
+            self._checkpointed_calls = 0
+            self._skipped_detectors = 0
+            self._warned_skipped_detectors = False
             self._tracker = CostTracker(
                 self._tracker.price_table,
                 default_price=self._default_price,
@@ -378,6 +397,147 @@ class Guard:
             )
             self._action_monitor.reset()
             self._progress_monitor.reset()
+
+    # -- checkpointing -------------------------------------------------------
+
+    def snapshot(self) -> dict[str, Any]:
+        """This run's counters as a small, JSON-serialisable dict.
+
+        Pairs with :meth:`restore` so an agent that checkpoints its own state can
+        checkpoint its spend too, and a resumed run does not start with a fresh
+        budget::
+
+            state = {"cursor": 41, "guard": guard.snapshot()}
+            write_checkpoint(state)
+
+            # ... later, in a new process ...
+            guard = Guard.from_snapshot(read_checkpoint()["guard"], max_usd=5.0)
+            guard.remaining_usd      # what is actually left, not the full budget
+
+        The snapshot is **counters, not records**: calls are grouped by
+        ``(model, tag, tool)``, so ``by_model``, ``by_tag`` and ``by_tool`` all
+        survive exactly, while per-call detail (timestamps, ``meta``, the order
+        calls happened in) does not. That is a deliberate size decision — a
+        checkpoint written on every loop iteration cannot carry a full call log —
+        and :meth:`agentguard.Guard.report` says which numbers it inherited rather
+        than presenting them as its own observations.
+
+        Two things are deliberately *not* checkpointed:
+
+        * **Detector windows are** (they describe work already observed, and a loop
+          that spans a checkpoint is still a loop).
+        * **Wall-clock time is not.** ``max_seconds`` caps how long *this process*
+          may run, so restoring an elapsed duration would make a resumed run trip
+          on time it did not spend. Money and steps accumulate; the clock restarts.
+        """
+        with self._lock:
+            return {
+                "version": SNAPSHOT_VERSION,
+                "guard": {"steps": self._steps},
+                "tracker": self._tracker.get_state(),
+                "detectors": {
+                    "actions": self._action_monitor.get_states(),
+                    "progress": self._progress_monitor.get_states(),
+                },
+            }
+
+    def as_snapshot(self, *, indent: int | None = None) -> str:
+        """The snapshot serialised to JSON, for writing into your own checkpoint."""
+        # newline=/encoding are the writer's business; this only produces the text.
+        return json.dumps(self.snapshot(), indent=indent, sort_keys=False)
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: Mapping[str, Any] | str,
+        *,
+        max_usd: float | None = None,
+        max_tokens: int | None = None,
+        max_steps: int | None = None,
+        max_seconds: float | None = None,
+        **kwargs: Any,
+    ) -> Guard:
+        """Build a guard that continues the run a snapshot came from.
+
+        Every argument takes the same meaning as on :class:`Guard`, so the limits
+        are stated once here rather than being carried in the checkpoint — a
+        budget is a property of the run you are starting, and letting a stale
+        checkpoint re-impose yesterday's cap would be the wrong default::
+
+            guard = Guard.from_snapshot(payload, max_usd=5.0, max_steps=100)
+            guard.spent_usd          # carried over
+            guard.steps              # carried over
+            guard.elapsed_s          # starts at 0 — see Guard.snapshot
+        """
+        parsed = _parse_snapshot(snapshot)
+        guard = cls(
+            max_usd=max_usd,
+            max_tokens=max_tokens,
+            max_steps=max_steps,
+            max_seconds=max_seconds,
+            **kwargs,
+        )
+        guard.restore(parsed)
+        return guard
+
+    def restore(self, snapshot: Mapping[str, Any] | str) -> None:
+        """Adopt a snapshot's counters, replacing whatever this guard had.
+
+        Raises :class:`~agentguard.GuardConfigError` for a snapshot this version
+        cannot read exactly. Refusing is the point: a budget that restores
+        *approximately* is a budget that might not stop.
+        """
+        parsed = _parse_snapshot(snapshot)
+        version = parsed.get("version", SNAPSHOT_VERSION)
+        if version != SNAPSHOT_VERSION:
+            raise GuardConfigError(
+                f"this snapshot was written in format version {version!r}, but this "
+                f"version of agentguard reads {SNAPSHOT_VERSION}"
+            )
+
+        guard_state = parsed.get("guard") or {}
+        if not isinstance(guard_state, Mapping):
+            raise GuardConfigError(
+                f"snapshot 'guard' must be a mapping, got {type(guard_state).__name__}"
+            )
+        steps = guard_state.get("steps", 0)
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 0:
+            raise GuardConfigError(
+                f"snapshot 'guard.steps' must be a non-negative int, got {steps!r}"
+            )
+
+        tracker_state = parsed.get("tracker")
+        if not isinstance(tracker_state, Mapping):
+            raise GuardConfigError("snapshot is missing its 'tracker' state")
+
+        detectors = parsed.get("detectors") or {}
+        if not isinstance(detectors, Mapping):
+            raise GuardConfigError("snapshot 'detectors' must be a mapping")
+        actions = _read_detector_states(detectors.get("actions"))
+        progress = _read_detector_states(detectors.get("progress"))
+
+        with self._lock:
+            # Trackers are rebuilt rather than mutated, so a failed restore cannot
+            # leave a half-adopted budget behind: the same reason the validation
+            # above runs before anything is assigned.
+            self._tracker = CostTracker.restore(
+                tracker_state,
+                self._tracker.price_table,
+                default_price=self._default_price,
+                on_unknown_model=self._on_unknown_model,
+            )
+            self._steps = steps
+            self._created_at = self._clock()
+            self._tripped = None
+            self._warned_empty = False
+            self._checkpointed_calls = self._tracker.calls
+            self._action_monitor.set_states(actions)
+            self._progress_monitor.set_states(progress)
+            self._skipped_detectors = sum(1 for state in (*actions, *progress) if state is None)
+            self._warned_skipped_detectors = False
+
+        if self._skipped_detectors:
+            self._warn_skipped_detectors()
 
     # -- read-only state -----------------------------------------------------
 
@@ -601,6 +761,21 @@ class Guard:
                 )
         return worst
 
+    def _warn_skipped_detectors(self) -> None:
+        """Say once that a checkpoint could not carry every detector's history."""
+        if self._warned_skipped_detectors or not self._skipped_detectors:
+            return
+        self._warned_skipped_detectors = True
+        count = self._skipped_detectors
+        warnings.warn(
+            f"{count} detector(s) in this guard do not implement get_state/set_state, "
+            f"so their observation history was not restored from the checkpoint; a "
+            f"loop that began before it may need more observations before it trips. "
+            f"The budget, step count and accounting are unaffected.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
     # -- loop detection ------------------------------------------------------
 
     @staticmethod
@@ -788,6 +963,7 @@ class Guard:
             trip=trip_verdict,
             tripped_reason=tripped_reason,
             pricing_sources=tuple(str(source) for source in self._pricing_config.sources),
+            checkpointed_calls=self._checkpointed_calls,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -831,6 +1007,44 @@ def _loop_exception(verdict: LoopVerdict) -> LoopDetected:
         count=verdict.count,
         step=verdict.step,
     )
+
+
+def _parse_snapshot(snapshot: Mapping[str, Any] | str) -> Mapping[str, Any]:
+    """Accept a snapshot as the dict :meth:`Guard.snapshot` returned, or as JSON."""
+    if isinstance(snapshot, str):
+        try:
+            decoded = json.loads(snapshot)
+        except ValueError as exc:
+            raise GuardConfigError(f"snapshot is not valid JSON: {exc}") from exc
+    else:
+        decoded = snapshot
+    if not isinstance(decoded, Mapping):
+        raise GuardConfigError(
+            f"snapshot must be a mapping or JSON object, got {type(decoded).__name__}"
+        )
+    return decoded
+
+
+def _read_detector_states(value: Any) -> list[Mapping[str, Any] | None]:
+    """One optional state per detector, as :meth:`LoopMonitor.get_states` emits."""
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise GuardConfigError(
+            f"snapshot detector states must be a list, got {type(value).__name__}"
+        )
+    states: list[Mapping[str, Any] | None] = []
+    for position, state in enumerate(value):
+        if state is None:
+            states.append(None)
+        elif isinstance(state, Mapping):
+            states.append(state)
+        else:
+            raise GuardConfigError(
+                f"snapshot detector state {position} must be a mapping or null, "
+                f"got {type(state).__name__}"
+            )
+    return states
 
 
 def _validate_limits(

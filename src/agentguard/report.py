@@ -143,6 +143,13 @@ class Report:
     pricing_as_of: str = PRICING_AS_OF
     pricing_sources: tuple[str, ...] = ()
     """User config files the prices came from, so a report is auditable."""
+    checkpointed_calls: int = 0
+    """Calls inherited from a restored checkpoint, not observed by this run.
+
+    Non-zero means ``by_model`` / ``by_tag`` / ``by_tool`` are counting work this
+    process never saw, and that the per-call log is gone — see
+    :meth:`agentguard.Guard.snapshot`.
+    """
 
     # -- text ----------------------------------------------------------------
 
@@ -226,6 +233,8 @@ class Report:
         if self.pricing_sources:
             for source in self.pricing_sources:
                 lines.append(f"  pricing config: {source}")
+        if self.checkpointed_calls:
+            lines.append(f"  includes {self.checkpointed_calls} call(s) restored from a checkpoint")
         return "\n".join(lines)
 
     def __str__(self) -> str:
@@ -276,6 +285,7 @@ class Report:
             "tripped_reason": self.tripped_reason,
             "pricing_as_of": self.pricing_as_of,
             "pricing_sources": list(self.pricing_sources),
+            "checkpointed_calls": self.checkpointed_calls,
         }
 
     @classmethod
@@ -364,6 +374,7 @@ class Report:
             tripped_reason=data.get("tripped_reason"),
             pricing_as_of=str(data.get("pricing_as_of", PRICING_AS_OF)),
             pricing_sources=tuple(str(item) for item in data.get("pricing_sources") or ()),
+            checkpointed_calls=int(data.get("checkpointed_calls", 0)),
         )
 
 

@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .exceptions import GuardConfigError
 from .pricing import Price, PriceTable
 
 __all__ = [
@@ -32,6 +33,11 @@ __all__ = [
 #: Bucket name for calls that carried no tag (or no tool). Kept as one literal so
 #: the parts of an attribution breakdown always add up to the whole.
 UNATTRIBUTED = "(unattributed)"
+
+#: Format version for checkpointed state. A snapshot written by a different
+#: layout is refused rather than half-read: a budget that silently restores the
+#: wrong arithmetic is worse than one that refuses to restore at all.
+SNAPSHOT_VERSION = 1
 
 
 # --------------------------------------------------------------------------- #
@@ -374,8 +380,6 @@ class CostTracker:
 
     def _handle_unknown_model(self, model: str) -> None:
         if self._on_unknown_model == "error":
-            from .exceptions import GuardConfigError
-
             raise GuardConfigError(
                 f"no price known for model {model!r}. Add it via "
                 f"Guard(pricing={{{model!r}: (input_per_1m, output_per_1m)}}), pass "
@@ -560,3 +564,259 @@ class CostTracker:
                 "by_tool": [s.as_dict() for s in self.by_tool().values()],
                 "records": [r.as_dict() for r in self._records],
             }
+
+    # -- checkpointing -------------------------------------------------------
+
+    def get_state(self) -> dict[str, Any]:
+        """Calls grouped by ``(model, tag, tool)``, small enough to checkpoint.
+
+        Deliberately **not** :meth:`as_dict`, which carries every
+        :class:`CallRecord` — the wrong weight for something written on every loop
+        iteration. Grouping rather than three separate marginal breakdowns is what
+        makes the checkpoint invertible: :meth:`set_state` can rebuild records from
+        this and recover ``by_model``, ``by_tag`` and ``by_tool`` exactly, whereas
+        independent marginals would each be right only if the others were ignored.
+
+        What is genuinely lost is per-call detail: individual records, their
+        timestamps, their ``meta``, and the order they happened in.
+
+        >>> tracker = CostTracker(on_unknown_model="ignore")
+        >>> _ = tracker.record(model="gpt-4o", usage=Usage(1_000_000, 0), tag="search")
+        >>> tracker.get_state()["groups"][0]["calls"]
+        1
+        """
+        with self._lock:
+            groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+            for record in self._records:
+                model = record.canonical_model or record.model
+                key = (model, record.tag or UNATTRIBUTED, record.tool or UNATTRIBUTED)
+                group = groups.setdefault(
+                    key,
+                    {
+                        "calls": 0,
+                        "unpriced_calls": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost_usd": 0.0,
+                    },
+                )
+                group["calls"] += 1
+                if not record.priced:
+                    group["unpriced_calls"] += 1
+                group["input_tokens"] += record.usage.input_tokens
+                group["output_tokens"] += record.usage.output_tokens
+                # Summed once here and carried as a single number, so the float
+                # total survives the round trip instead of being re-added per
+                # reconstructed record.
+                group["cost_usd"] += record.cost_usd or 0.0
+
+            rows = [
+                {
+                    "model": model,
+                    "tag": tag,
+                    "tool": tool,
+                    **values,
+                    "cost_usd": round(values["cost_usd"], 8),
+                }
+                for (model, tag, tool), values in groups.items()
+            ]
+            return {
+                "version": SNAPSHOT_VERSION,
+                "calls": len(self._records),
+                "unpriced_calls": self._unpriced_calls,
+                "groups": rows,
+            }
+
+    @classmethod
+    def restore(
+        cls,
+        state: Mapping[str, Any],
+        table: PriceTable | None = None,
+        *,
+        default_price: Price | None = None,
+        on_unknown_model: str = "warn",
+    ) -> CostTracker:
+        """Rebuild a tracker from :meth:`get_state` output.
+
+        >>> original = CostTracker(on_unknown_model="ignore")
+        >>> _ = original.record(model="gpt-4o", usage=Usage(2_000_000, 0))
+        >>> rebuilt = CostTracker.restore(original.get_state(), original.price_table,
+        ...                               on_unknown_model="ignore")
+        >>> round(rebuilt.total_usd, 2)
+        5.0
+        """
+        tracker = cls(
+            table,
+            default_price=default_price,
+            on_unknown_model=on_unknown_model,
+        )
+        tracker.set_state(state)
+        return tracker
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        """Replace all accounting with a previously captured state.
+
+        Group costs are divided evenly across the priced calls in the group, so a
+        restored report keeps every breakdown total intact. Per-call costs are
+        therefore an average rather than what each call really cost — which is
+        exactly the granularity a checkpoint does not carry, and why the report
+        says so rather than implying it recovered the original records.
+        """
+        records, unpriced_calls, warned = _read_tracker_state(state)
+
+        with self._lock:
+            self._records = records
+            self._unpriced_calls = unpriced_calls
+            self._models_warned = warned
+
+
+def _read_int(source: Mapping[str, Any], key: str, context: str) -> int:
+    value = source.get(key, 0)
+    if isinstance(value, bool):
+        raise GuardConfigError(f"{context}: {key} must be an integer, got {value!r}")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    raise GuardConfigError(f"{context}: {key} must be an integer, got {value!r}")
+
+
+def _read_label(
+    source: Mapping[str, Any], key: str, context: str, *, required: bool = False
+) -> str:
+    value = source.get(key)
+    if value is None:
+        if required:
+            raise GuardConfigError(f"{context}: {key} is required")
+        return UNATTRIBUTED
+    if not isinstance(value, str) or not value:
+        raise GuardConfigError(f"{context}: {key} must be a non-empty string, got {value!r}")
+    return value
+
+
+def _restored_record(
+    *,
+    index: int,
+    model: str,
+    tag: str | None,
+    tool: str | None,
+    usage: Usage,
+    cost_usd: float | None,
+) -> CallRecord:
+    """One record rebuilt from a snapshot group.
+
+    ``at`` is ``0.0`` rather than the current time on purpose: a restored record was
+    not observed now, and stamping it fresh would date it to the restore and make
+    the report repeat a time that never happened.
+    """
+    return CallRecord(
+        index=index,
+        model=model,
+        canonical_model=model,
+        usage=usage,
+        cost_usd=cost_usd,
+        at=0.0,
+        elapsed_s=0.0,
+        tag=tag,
+        tool=tool,
+    )
+
+
+def _read_tracker_state(
+    state: Mapping[str, Any],
+) -> tuple[list[CallRecord], int, set[str]]:
+    """Validate a checkpoint and rebuild the records it describes.
+
+    Every failure here is a refusal rather than a repair. A checkpoint that cannot
+    be read exactly is one whose budget would be wrong, and a wrong budget is the
+    single outcome this library exists to prevent.
+    """
+    if not isinstance(state, Mapping):
+        raise GuardConfigError(f"tracker state must be a mapping, got {type(state).__name__}")
+    version = state.get("version", SNAPSHOT_VERSION)
+    if version != SNAPSHOT_VERSION:
+        raise GuardConfigError(
+            f"this snapshot was written in format version {version!r}, but this "
+            f"version of agentguard reads {SNAPSHOT_VERSION}; a budget restored from "
+            f"a format it does not understand would be wrong rather than merely "
+            f"incomplete"
+        )
+
+    groups = state.get("groups")
+    if not isinstance(groups, (list, tuple)):
+        raise GuardConfigError("tracker state: 'groups' must be a list")
+
+    records: list[CallRecord] = []
+    unpriced_total = 0
+    warned: set[str] = set()
+
+    for position, raw in enumerate(groups):
+        context = f"tracker state: groups[{position}]"
+        if not isinstance(raw, Mapping):
+            raise GuardConfigError(f"{context} must be a mapping, got {type(raw).__name__}")
+        model = _read_label(raw, "model", context, required=True)
+        tag = _read_label(raw, "tag", context)
+        tool = _read_label(raw, "tool", context)
+        calls = _read_int(raw, "calls", context)
+        unpriced = _read_int(raw, "unpriced_calls", context)
+        if calls < 0 or unpriced < 0:
+            raise GuardConfigError(f"{context}: call counts must not be negative")
+        if unpriced > calls:
+            raise GuardConfigError(
+                f"{context}: unpriced_calls ({unpriced}) exceeds calls ({calls})"
+            )
+        raw_cost = raw.get("cost_usd", 0.0)
+        if isinstance(raw_cost, bool) or not isinstance(raw_cost, (int, float)):
+            raise GuardConfigError(f"{context}: cost_usd must be a number, got {raw_cost!r}")
+        cost = float(raw_cost)
+        priced_calls = calls - unpriced
+        if cost and not priced_calls:
+            raise GuardConfigError(
+                f"{context}: cost_usd is {cost!r} but every call is unpriced; a model "
+                f"with no price cannot have a cost"
+            )
+        priced_cost = cost / priced_calls if priced_calls else 0.0
+        record_tag = None if tag == UNATTRIBUTED else tag
+        record_tool = None if tool == UNATTRIBUTED else tool
+
+        # A group can mix priced and unpriced calls of the same model — an unknown
+        # model falls back to `default_price`, and a known one can be unpriced by a
+        # `disable` entry. Both kinds must be reproduced, or the group's money lands
+        # on a record the attribution breakdown then labels "unpriced".
+        #
+        # Token counts belong to the group, and the group has `calls` members with
+        # no record of how the tokens were split. Giving them all to the first
+        # record and none to the rest keeps every total and every breakdown exact;
+        # only the per-record view is coarse, and that is the view a checkpoint
+        # cannot honestly reconstruct.
+        plan: list[float | None] = [None] * unpriced + [priced_cost] * priced_calls
+        for position_in_group, record_cost in enumerate(plan):
+            records.append(
+                _restored_record(
+                    index=len(records),
+                    model=model,
+                    tag=record_tag,
+                    tool=record_tool,
+                    usage=Usage(
+                        input_tokens=(
+                            _read_int(raw, "input_tokens", context) if position_in_group == 0 else 0
+                        ),
+                        output_tokens=(
+                            _read_int(raw, "output_tokens", context)
+                            if position_in_group == 0
+                            else 0
+                        ),
+                    ),
+                    cost_usd=record_cost,
+                )
+            )
+        if unpriced:
+            warned.add(model)
+        unpriced_total += unpriced
+
+    claimed = state.get("calls")
+    if isinstance(claimed, int) and claimed != len(records):
+        raise GuardConfigError(
+            f"tracker state claims {claimed} call(s) but describes {len(records)}"
+        )
+    return records, unpriced_total, warned
