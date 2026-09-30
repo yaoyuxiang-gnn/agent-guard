@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.3.1] - 2026-09-30
+
+Documentation only: no library behaviour changed, and the wheel is the same code as
+0.3.0.
+
 ### Fixed
 
 - **The README claimed a bundled-model count the CLI did not print.** 0.3.0's
@@ -27,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detectors — the feature that distinguishes this from a spend counter — two hundred
   lines in.
 
-  The new one is 319 lines and leads with evidence. Real output from
+  The new one is 327 lines and leads with evidence. Real output from
   `examples/loop_detection.py` shows a stuck agent stopped at the third identical
   call, with the report and the cost it did *not* incur; the four detectors are a
   table with the exact call each one fires on; and the integration recipes are
@@ -361,7 +368,8 @@ distribution name carries the long form: the import and the console script are b
   and Windows.
 - 265 tests, including every docstring example.
 
-[Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/yaoyuxiang-gnn/agent-guard/releases/tag/v0.2.0
