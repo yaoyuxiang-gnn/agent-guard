@@ -21,8 +21,14 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _bundled_count(line: str) -> str | None:
-    """The ``N`` in ``N models bundled ...``, or ``None`` if the shape changed."""
-    match = re.match(r"^(\d+) models bundled", line.strip())
+    """The ``N`` in ``... N models ...``, or ``None`` if the line makes no claim.
+
+    Deliberately unanchored: the README states this number both as a quoted
+    ``agentguard pricing`` transcript (``119 models bundled, ...``) and inside a
+    sentence (``The bundled table carries **119 models**``). Both are claims about
+    the same number, so both are checked.
+    """
+    match = re.search(r"\*{0,2}(\d+)\s+models?\b", line, re.IGNORECASE)
     return match.group(1) if match else None
 
 
@@ -439,21 +445,18 @@ class ConfiguredPricingTests(unittest.TestCase):
         self.assertIn(f"{len(DEFAULT_PRICING)} models bundled", out)
 
     def test_readme_transcript_matches_the_cli(self) -> None:
-        # The README shows real `agentguard pricing` output, and 0.3.0 shipped
-        # with it claiming 113 models while the table held 119 -- a refresh added
-        # entries after the transcript was written, and nothing noticed. The CLI
-        # is run for real here and the two numbers are compared, not restated.
+        # The README makes claims about the bundled-model count in prose and in a
+        # quoted CLI transcript. 0.3.0 shipped with the transcript saying 113 while
+        # the table held 119 -- a refresh added entries after the transcript was
+        # written, and nothing compared the two. The CLI is run for real here and
+        # its count compared against every claim the README makes.
         _code, out, _ = run_cli("pricing", "--no-config")
         live = _bundled_count(out.splitlines()[0])
         self.assertIsNotNone(live, "the CLI no longer reports a bundled-model count")
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        quoted = [
-            line.strip()
-            for line in readme.splitlines()
-            if re.match(r"^\d+ models bundled", line.strip())
-        ]
-        self.assertTrue(quoted, "the README no longer quotes an `agentguard pricing` run")
+        quoted = [line.strip() for line in readme.splitlines() if _bundled_count(line)]
+        self.assertTrue(quoted, "the README no longer states a bundled-model count")
         for line in quoted:
             with self.subTest(quoted=line):
                 self.assertEqual(

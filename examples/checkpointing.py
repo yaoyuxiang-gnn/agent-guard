@@ -35,10 +35,14 @@ def main() -> None:
 
     payload = first.as_snapshot(indent=2)
     print(f"  spent ${first.spent_usd:.4f} of ${BUDGET}, {first.calls} calls")
-    print(f"  checkpointing {len(payload)} bytes of JSON (not a call log)")
-
-    # What a real agent writes alongside its own state.
+    # What a real agent writes alongside its own state. `as_snapshot()` with no
+    # indent is the form to store: the pretty one above is for reading.
     checkpoint = {"cursor": 3, "guard": json.loads(payload)}
+    compact = first.as_snapshot()
+    print(
+        f"  checkpointing {len(compact)} bytes of JSON "
+        f"({len(payload)} pretty-printed) - counters, not a call log"
+    )
 
     print("\n== second process: resume from the checkpoint ==")
     resumed = Guard.from_snapshot(

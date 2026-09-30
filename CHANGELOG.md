@@ -13,9 +13,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `agentguard pricing` transcript said 113 models while the table held 119 — the
   refresh added six entries (the `claude-mythos` pair and `grok-4.20`) after the
   transcript was written, and nothing compared the two. Both READMEs are corrected,
-  and a test now runs the CLI and compares its count against the quoted one, so the
-  next refresh cannot reintroduce the drift. The published 0.3.0 page keeps the
-  wrong number: PyPI files are immutable, so this lands in the next release.
+  and a test now runs the CLI and compares its count against every claim the README
+  makes about it, so the next refresh cannot reintroduce the drift. The published
+  0.3.0 page keeps the wrong number: PyPI files are immutable, so this lands in the
+  next release.
+
+### Changed
+
+- **Both READMEs were rewritten around what a reader actually needs, and the
+  reference material moved to `docs/DETAILS.md`.** The old README was 600 lines and
+  asked the reader to absorb the whole API before showing them a reason to care: it
+  opened with a problem statement, then a quickstart, and only reached the four loop
+  detectors — the feature that distinguishes this from a spend counter — two hundred
+  lines in.
+
+  The new one is 319 lines and leads with evidence. Real output from
+  `examples/loop_detection.py` shows a stuck agent stopped at the third identical
+  call, with the report and the cost it did *not* incur; the four detectors are a
+  table with the exact call each one fires on; and the integration recipes are
+  ordered by how much you have to change. Everything else — detector tuning, the
+  full pricing config and its trust model, the checkpoint format, the complete CLI,
+  the design principles, the limitations in full — is in `docs/DETAILS.md`, which
+  ships in the sdist and is one link away from six places in the README.
+
+  Two things the rewrite added rather than moved:
+
+  - **A "Honest answers" section**, because the questions a cautious reader has are
+    answered better up front than in an issue: what happens when a price goes stale,
+    what the library deliberately is not, and what its limitations actually are.
+    Most of it was already documented — it just was not where anyone would look.
+  - **Claims that are checked.** The detector table says each detector fires on its
+    own scenario with default settings, so that is now verified rather than asserted:
+    every detector fires on its scenario *in isolation*, none of them fires on
+    genuinely varied work, the default set stays clean on it, and `repeat` fires at
+    exactly the third identical call.
+
+  The Chinese README is a full rewrite rather than a patch, not a translation of the
+  old one, and keeps the same structure so the two can be diffed against each other.
+- **`examples/checkpointing.py` now prints both snapshot sizes.** It reported only
+  the pretty-printed length (1358 bytes), which reads as the cost of a checkpoint
+  when it is really the cost of reading one — the compact form is 882 bytes for the
+  same run. It prints both and says which one to store.
 
 ## [0.3.0] - 2026-09-30
 
