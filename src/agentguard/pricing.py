@@ -63,7 +63,7 @@ __all__ = [
 
 #: Date the bundled price snapshot was last reviewed. Prices move; treat anything
 #: older than a few months as indicative and pass your own ``pricing=`` overrides.
-PRICING_AS_OF = "2026-01"
+PRICING_AS_OF = "2026-09"
 
 #: Where a resolved price came from. Reported per entry so "why is this model
 #: $9?" has an answer that does not require reading the source.
@@ -184,11 +184,56 @@ class Price:
 
 #: Keys are canonical, lower-case model names. Aliases resolve via
 #: :func:`normalize_model_key` plus a conservative prefix match.
+#:
+#: Reviewed 2026-09 against each provider's published list prices: the OpenAI,
+#: Anthropic, Google, xAI, DeepSeek and Mistral pricing pages, cross-checked
+#: against the machine-readable catalogue at ``https://openrouter.ai/api/v1/models``
+#: (where the two disagree, the provider's own page wins). Rates are USD per 1M
+#: tokens; a missing ``cached`` means the provider publishes no cached-input price
+#: for that model, not that caching is free.
+#:
+#: **Retired models are kept at their last published rate.** Several entries below
+#: are withdrawn, closed to new callers, or have stopped being listed at all. They
+#: stay because removing a name is not neutral: it silently turns every call to that
+#: model *unpriced*, which excludes the spend from the budget — the opposite of what
+#: someone still running that model needs. A stale number is a smaller error than a
+#: disabled cap. Override or disable anything you know better::
+#:
+#:     agentguard config set my-model 3 12 --cached 0.3
+#:     agentguard config disable grok-3
+#:
+#: A model absent here entirely is reported as unpriced and excluded from the
+#: budget rather than billed at a guessed rate, so a stale table fails safe — but
+#: "fails safe" for a model you actually use means a cap that never fires.
 DEFAULT_PRICING: dict[str, Price] = {
     # ---------------------------------------------------------------- OpenAI
+    # GPT-6.x (current flagship family)
+    "gpt-6-astra": Price(10.00, 50.00, 1.00),
+    "gpt-6-sol": Price(2.00, 10.00, 0.20),
+    "gpt-6.1-sol": Price(2.00, 10.00, 0.10),
+    "gpt-6-luna": Price(0.10, 0.50, 0.01),
+    # GPT-5.x
+    # gpt-5.6-sol is billed at OpenAI's cyber-model rate, not the promotional one a
+    # gateway may quote for it.
+    "gpt-5.6-sol": Price(4.00, 20.00, 0.40),
+    "gpt-5.6-cyber": Price(12.50, 75.00, 1.25),
+    "gpt-5.6-terra": Price(2.00, 12.00, 0.20),
+    "gpt-5.6-luna": Price(0.20, 1.20, 0.02),
+    "gpt-5.5": Price(5.00, 30.00, 0.50),
+    "gpt-5.4": Price(2.50, 15.00, 0.25),
+    "gpt-5.4-mini": Price(0.75, 4.50, 0.075),
+    "gpt-5.4-nano": Price(0.20, 1.25, 0.02),
+    "gpt-5.3-codex": Price(1.75, 14.00, 0.175),
+    "gpt-5.2": Price(1.75, 14.00, 0.175),
+    "gpt-5.2-codex": Price(1.75, 14.00, 0.175),
+    "gpt-5.1": Price(1.25, 10.00, 0.125),
+    "gpt-5.1-codex": Price(1.25, 10.00, 0.13),
+    "gpt-5.1-codex-max": Price(1.25, 10.00, 0.125),
+    "gpt-5.1-codex-mini": Price(0.25, 2.00, 0.03),
     "gpt-5": Price(1.25, 10.00, 0.125),
     "gpt-5-mini": Price(0.25, 2.00, 0.025),
     "gpt-5-nano": Price(0.05, 0.40, 0.005),
+    # GPT-4.x and o-series, still widely pinned in production
     "gpt-4.1": Price(2.00, 8.00, 0.50),
     "gpt-4.1-mini": Price(0.40, 1.60, 0.10),
     "gpt-4.1-nano": Price(0.10, 0.40, 0.025),
@@ -200,38 +245,109 @@ DEFAULT_PRICING: dict[str, Price] = {
     "o3": Price(2.00, 8.00, 0.50),
     "o3-mini": Price(1.10, 4.40, 0.55),
     "o4-mini": Price(1.10, 4.40, 0.275),
+    # Open-weight, served by OpenAI
+    "gpt-oss-120b": Price(0.037, 0.17),
+    "gpt-oss-20b": Price(0.018, 0.09, 0.009),
     # ------------------------------------------------------------- Anthropic
+    # Both spellings of the version are listed. Anthropic's own model ids use
+    # dashes ("claude-haiku-4-5-20251001"), while the catalogue these rates came
+    # from writes them with dots. Normalization keeps the two apart, so without
+    # both, one of the two spellings would be reported unpriced.
+    "claude-fable-5.1": Price(10.00, 50.00, 0.25),
+    "claude-fable-5-1": Price(10.00, 50.00, 0.25),
+    "claude-fable-5": Price(10.00, 50.00, 1.00),
+    "claude-mythos-5.1": Price(10.00, 50.00, 0.25),
+    "claude-mythos-5-1": Price(10.00, 50.00, 0.25),
+    "claude-mythos-5": Price(10.00, 50.00, 1.00),
+    "claude-opus-5.5": Price(4.00, 20.00, 0.20),
+    "claude-opus-5-5": Price(4.00, 20.00, 0.20),
+    "claude-opus-5": Price(5.00, 25.00, 0.50),
+    "claude-opus-4.8": Price(5.00, 25.00, 0.50),
+    "claude-opus-4-8": Price(5.00, 25.00, 0.50),
+    "claude-opus-4.7": Price(5.00, 25.00, 0.50),
+    "claude-opus-4-7": Price(5.00, 25.00, 0.50),
+    "claude-opus-4.6": Price(5.00, 25.00, 0.50),
+    "claude-opus-4-6": Price(5.00, 25.00, 0.50),
+    "claude-opus-4.5": Price(5.00, 25.00, 0.50),
+    "claude-opus-4-5": Price(5.00, 25.00, 0.50),
     "claude-opus-4-1": Price(15.00, 75.00, 1.50),
     "claude-opus-4": Price(15.00, 75.00, 1.50),
+    "claude-sonnet-5.5": Price(2.00, 10.00, 0.20),
+    "claude-sonnet-5-5": Price(2.00, 10.00, 0.20),
+    # Anthropic's table leaves Sonnet 5's input/output cells empty while printing
+    # its cache-read rate. The base rate follows from Anthropic's own documented
+    # 0.1x cache multiplier (0.20 / 0.1), and 2/10 is what two independent
+    # catalogues publish for it — consistent, but inferred rather than read.
+    "claude-sonnet-5": Price(2.00, 10.00, 0.20),
+    "claude-sonnet-4.6": Price(3.00, 15.00, 0.30),
+    "claude-sonnet-4-6": Price(3.00, 15.00, 0.30),
     "claude-sonnet-4-5": Price(3.00, 15.00, 0.30),
     "claude-sonnet-4": Price(3.00, 15.00, 0.30),
+    "claude-haiku-4.5": Price(1.00, 5.00, 0.10),
+    "claude-haiku-4-5": Price(1.00, 5.00, 0.10),
     "claude-3-7-sonnet": Price(3.00, 15.00, 0.30),
     "claude-3-5-sonnet": Price(3.00, 15.00, 0.30),
     "claude-3-5-haiku": Price(0.80, 4.00, 0.08),
     "claude-3-opus": Price(15.00, 75.00, 1.50),
     "claude-3-haiku": Price(0.25, 1.25, 0.03),
     # ---------------------------------------------------------------- Google
-    "gemini-2.5-pro": Price(1.25, 10.00, 0.31),
-    "gemini-2.5-flash": Price(0.30, 2.50, 0.075),
+    "gemini-3.8-flash": Price(0.75, 3.75, 0.075),
+    "gemini-3.7-flash": Price(0.75, 3.75, 0.075),
+    "gemini-3.6-flash": Price(0.75, 3.75, 0.075),
+    "gemini-3.5-flash": Price(1.50, 9.00, 0.15),
+    "gemini-3.5-flash-lite": Price(0.30, 2.50, 0.03),
+    "gemini-3.1-flash-lite": Price(0.25, 1.50, 0.025),
+    # Dash form, because Google writes "gemini-3.1-pro-preview" and "gemini-3-pro".
+    "gemini-3.1-pro": Price(2.00, 12.00, 0.20),
+    "gemini-3-1-pro": Price(2.00, 12.00, 0.20),
+    "gemini-3-flash": Price(0.50, 3.00, 0.05),
+    "gemini-2.5-pro": Price(1.25, 10.00, 0.125),
+    "gemini-2.5-flash": Price(0.30, 2.50, 0.03),
+    "gemini-2.5-flash-lite": Price(0.10, 0.40, 0.01),
     "gemini-2.0-flash": Price(0.10, 0.40, 0.025),
     "gemini-1.5-pro": Price(1.25, 5.00, 0.3125),
     "gemini-1.5-flash": Price(0.075, 0.30, 0.01875),
     # -------------------------------------------------------------- DeepSeek
-    "deepseek-chat": Price(0.27, 1.10, 0.07),
+    "deepseek-v4-pro": Price(1.32, 3.96, 0.044),
+    "deepseek-v4.1-flash": Price(0.30, 1.20, 0.006),
+    "deepseek-v4-flash": Price(0.14, 0.28, 0.028),
+    "deepseek-v3.2": Price(0.28, 0.42, 0.028),
+    "deepseek-v3.1": Price(0.25, 0.95, 0.13),
+    "deepseek-chat": Price(0.2574, 1.0287),
     "deepseek-reasoner": Price(0.55, 2.19, 0.14),
+    "deepseek-r1": Price(0.70, 2.50),
     # --------------------------------------------------------------- Mistral
-    "mistral-large": Price(2.00, 6.00),
-    "mistral-small": Price(0.20, 0.60),
-    "codestral": Price(0.30, 0.90),
+    "mistral-medium-3.5": Price(1.50, 7.50),
+    "mistral-medium-3.1": Price(0.40, 2.00, 0.04),
+    "mistral-large": Price(2.00, 6.00, 0.20),
+    "mistral-small": Price(0.15, 0.60, 0.015),
+    "codestral": Price(0.30, 0.90, 0.03),
+    "devstral": Price(0.40, 2.00, 0.04),
+    "ministral-14b": Price(0.20, 0.20, 0.02),
+    "ministral-8b": Price(0.15, 0.15, 0.015),
+    "ministral-3b": Price(0.10, 0.10, 0.01),
     # ------------------------------------------------------------------ xAI
-    "grok-4": Price(3.00, 15.00, 0.75),
-    "grok-3": Price(3.00, 15.00, 0.75),
-    "grok-3-mini": Price(0.30, 0.50, 0.075),
+    "grok-4.7": Price(2.00, 6.00, 0.50),
+    "grok-4.6": Price(2.00, 6.00, 0.50),
+    "grok-4.5": Price(2.00, 6.00, 0.30),
+    "grok-4.3": Price(1.25, 2.50, 0.20),
+    "grok-4.20": Price(1.25, 2.50, 0.20),
+    "grok-build-0.1": Price(1.00, 2.00, 0.20),
+    # Retired 2026-05-15, but their slugs still resolve and are billed at grok-4.3
+    # rates, so pricing them is closer to right than leaving them unpriced.
+    "grok-4": Price(1.25, 2.50, 0.20),
+    "grok-3": Price(1.25, 2.50, 0.20),
+    "grok-3-mini": Price(1.25, 2.50, 0.20),
     # ------------------------------------------------------- Open-weight hosts
     "llama-3.3-70b": Price(0.59, 0.79),
     "llama-3.1-8b": Price(0.05, 0.08),
+    "qwen3.8-max": Price(2.00, 6.00, 0.25),
+    "qwen3.8-flash": Price(0.15, 0.47, 0.016),
+    "qwen3.7-max": Price(1.475, 4.425, 0.295),
+    "qwen3.7-plus": Price(0.32, 1.28, 0.064),
+    "qwen3.7-flash": Price(0.03, 0.13, 0.006),
     "qwen-max": Price(1.60, 6.40),
-    "qwen-plus": Price(0.40, 1.20),
+    "qwen-plus": Price(0.26, 0.78, 0.052),
     "qwen-turbo": Price(0.05, 0.20),
 }
 

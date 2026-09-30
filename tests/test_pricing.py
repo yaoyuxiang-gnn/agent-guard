@@ -249,6 +249,172 @@ class PriceTableOverrideTests(unittest.TestCase):
         with self.assertRaises(GuardConfigError):
             PriceTable(overrides={"": (1.0, 2.0)})
 
+
+class BundledPriceTableTests(unittest.TestCase):
+    """The bundled table is data, and data rots. These are the checks a refresh
+    has to keep passing — a wrong rate here is a budget that never fires."""
+
+    def test_every_entry_is_reachable_by_its_own_name(self) -> None:
+        table = PriceTable()
+        for name in DEFAULT_PRICING:
+            with self.subTest(model=name):
+                self.assertIsNotNone(
+                    table.resolve(name),
+                    f"{name!r} is in the bundled table but does not resolve to itself",
+                )
+
+    def test_no_two_names_collapse_onto_one_key(self) -> None:
+        # Normalization is aggressive, so two keys that differ only in punctuation
+        # would silently shadow each other and one price would be unreachable.
+        keys = [normalize_model_key(name) for name in DEFAULT_PRICING]
+        duplicates = sorted({key for key in keys if keys.count(key) > 1})
+        self.assertEqual(duplicates, [], f"these names collide after normalization: {duplicates}")
+
+    def test_cached_input_is_never_dearer_than_fresh_input(self) -> None:
+        # A cached-input rate above the input rate would bill a cache hit as a
+        # penalty, which no provider does; it means a typo in the table.
+        for name, price in DEFAULT_PRICING.items():
+            if price.cached_input_per_1m is None:
+                continue
+            with self.subTest(model=name):
+                self.assertLessEqual(price.cached_input_per_1m, price.input_per_1m)
+
+    def test_output_is_never_cheaper_than_input(self) -> None:
+        # Holds for every model priced here and would catch a swapped pair.
+        for name, price in DEFAULT_PRICING.items():
+            with self.subTest(model=name):
+                self.assertGreaterEqual(price.output_per_1m, price.input_per_1m)
+
+    def test_no_price_is_zero(self) -> None:
+        # A zero rate is how a "free" model would be entered, but it is also what a
+        # missing column looks like. Real free tiers are reported as unpriced.
+        for name, price in DEFAULT_PRICING.items():
+            with self.subTest(model=name):
+                self.assertGreater(price.input_per_1m, 0.0)
+
+    def test_expected_model_families_are_present(self) -> None:
+        # A refresh that drops a family silently turns every call to it unpriced,
+        # which is the failure this whole table exists to prevent.
+        table = PriceTable()
+        for model in (
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-5",
+            "gpt-5-mini",
+            "o3",
+            "o4-mini",
+            "claude-3-5-sonnet",
+            "claude-3-5-haiku",
+            "claude-sonnet-4",
+            "claude-opus-4",
+            "gemini-1.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.5-pro",
+            "deepseek-chat",
+            "deepseek-reasoner",
+            "mistral-large",
+            "codestral",
+            "grok-3",
+            "grok-4",
+            "llama-3.3-70b",
+            "qwen-max",
+        ):
+            with self.subTest(model=model):
+                self.assertIsNotNone(table.resolve_price(model), f"{model} lost its price")
+
+    def test_current_flagships_are_priced(self) -> None:
+        # The refresh that motivated this class: a model newer than the snapshot is
+        # reported unpriced and excluded from the budget, so the cap a user
+        # configured never fires. One current model per provider, at minimum.
+        table = PriceTable()
+        for model in (
+            "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-5.5",
+            "gpt-5.1",
+            "claude-opus-5",
+            "claude-opus-5.5",
+            "claude-sonnet-5",
+            "claude-haiku-4.5",
+            "claude-fable-5.1",
+            "gemini-3.8-flash",
+            "gemini-3.1-pro",
+            "grok-4.7",
+            "deepseek-v4-pro",
+            "mistral-medium-3.5",
+            "qwen3.8-max",
+        ):
+            with self.subTest(model=model):
+                self.assertIsNotNone(table.resolve_price(model), f"{model} has no bundled price")
+
+    def test_a_dated_variant_resolves_to_its_family_price(self) -> None:
+        table = PriceTable()
+        # The shapes providers actually report, including the dash-dated ones.
+        for reported, expected in (
+            ("gpt-4o-2024-08-06", "gpt-4o"),
+            ("gpt-5.1-20260301", "gpt-5.1"),
+            ("claude-opus-5-20260601", "claude-opus-5"),
+            ("claude-haiku-4-5-20251001", "claude-haiku-4-5"),
+            ("gemini-3.1-pro-preview", "gemini-3.1-pro"),
+        ):
+            with self.subTest(reported=reported):
+                resolved = table.resolve(reported)
+                self.assertIsNotNone(resolved, f"{reported} resolved to nothing")
+                assert resolved is not None
+                self.assertEqual(resolved[0], expected)
+
+    def test_both_spellings_of_a_dotted_version_are_priced(self) -> None:
+        # Anthropic writes "claude-haiku-4-5" and the rate catalogue writes
+        # "claude-haiku-4.5"; either spelling must find the same rate rather than
+        # one of them silently counting as unpriced.
+        table = PriceTable()
+        for dotted, dashed in (
+            ("claude-haiku-4.5", "claude-haiku-4-5"),
+            ("claude-opus-5.5", "claude-opus-5-5"),
+            ("claude-sonnet-5.5", "claude-sonnet-5-5"),
+            ("claude-fable-5.1", "claude-fable-5-1"),
+            ("gemini-3.1-pro", "gemini-3-1-pro"),
+        ):
+            with self.subTest(dotted=dotted, dashed=dashed):
+                self.assertEqual(table.resolve_price(dotted), table.resolve_price(dashed))
+
+    def test_a_different_family_is_never_inherited_from_a_prefix(self) -> None:
+        # The conservative half of version stripping: gpt-5.6 must not be billed at
+        # the gpt-5 rate, because "6" is part of the model, not a build number.
+        table = PriceTable()
+        resolved = table.resolve("gpt-5.6-sol")
+        assert resolved is not None
+        self.assertEqual(resolved[0], "gpt-5.6-sol")
+        self.assertNotEqual(resolved[0], "gpt-5")
+
+    def test_retired_models_keep_a_price_rather_than_being_dropped(self) -> None:
+        # Dropping a name is not neutral: it turns every call to that model
+        # unpriced, which excludes the spend from the budget. Someone still running
+        # a withdrawn model is better served by its last published rate.
+        table = PriceTable()
+        for model in (
+            "grok-3",
+            "grok-4",
+            "deepseek-chat",
+            "deepseek-reasoner",
+            "gemini-2.0-flash",
+            "claude-3-5-sonnet",
+            "claude-3-5-haiku",
+            "gpt-4o",
+            "o4-mini",
+        ):
+            with self.subTest(model=model):
+                self.assertIsNotNone(
+                    table.resolve_price(model),
+                    f"{model} was dropped; its spend would now leave the budget",
+                )
+
+    def test_unknown_models_are_still_unpriced(self) -> None:
+        self.assertIsNone(PriceTable().resolve_price("definitely-not-a-real-model-9000"))
+
+
+class PriceTableTests(unittest.TestCase):
     def test_custom_base_replaces_the_bundled_table(self) -> None:
         table = PriceTable(base={"only": Price(1.0, 1.0)})
         self.assertEqual(len(table), 1)

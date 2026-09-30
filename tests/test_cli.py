@@ -11,7 +11,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from agentguard import Guard
+from agentguard import DEFAULT_PRICING, Guard
 from agentguard.cli import main
 from agentguard.config import CONFIG_ENV_VAR, CONFIG_TRUST_ENV_VAR, user_config_path
 
@@ -423,7 +423,10 @@ class ConfiguredPricingTests(unittest.TestCase):
         code, out, _ = run_cli("pricing", "--no-config")
         self.assertEqual(code, 0)
         self.assertNotIn("my-ft", out)
-        self.assertIn("41 models bundled", out)
+        # The count is derived, not spelled out: a hardcoded number here turns
+        # every price-table refresh into a test failure that says nothing about
+        # whether the CLI is correct.
+        self.assertIn(f"{len(DEFAULT_PRICING)} models bundled", out)
 
     def test_json_output_is_machine_readable(self) -> None:
         code, out, _ = run_cli("pricing", "--json")
