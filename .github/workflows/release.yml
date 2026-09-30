@@ -75,12 +75,28 @@ jobs:
           name: dist
           path: dist/
 
+      # A PyPI filename is immutable, so re-running this workflow for a version
+      # that is already published can only fail -- and because the GitHub release
+      # is created downstream of this job, that failure would also stop the release
+      # page from being rebuilt. Re-tagging an old commit, which a history rewrite
+      # does, is exactly that case.
+      #
+      # `skip-existing` is the publisher's own answer, and it is used instead of a
+      # pre-flight query because the queries disagree: for this project the
+      # per-version JSON endpoint reported a single release while every artifact of
+      # all four versions still downloaded, and the /simple/ index served both
+      # answers at different times. Guessing from a cached answer risks attempting
+      # an upload PyPI will reject; the publisher knows what it is uploading.
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
 
   github-release:
     name: create GitHub release
     needs: publish
-    if: startsWith(github.ref, 'refs/tags/v')
+    # `always()` so a publish step that had nothing to upload still rebuilds the
+    # release page; `needs.publish.result` is what decides whether that is safe.
+    if: always() && needs.publish.result == 'success' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write

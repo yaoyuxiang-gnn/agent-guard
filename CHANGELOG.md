@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.3.2] - 2026-09-30
+
+Packaging and documentation. No library behaviour changed; the wheel is the same
+code as 0.3.1.
+
 ### Removed
 
 - **The asset-generation scripts no longer ship, and one maintainer-only asset is
@@ -31,10 +38,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `docs/demo.svg` stays, and is now a checked-in asset with no generator in the
   repository. CONTRIBUTING says so, rather than pointing at a `make demo` target that
-  no longer exists. Both scripts remain in git history if they are ever wanted back.
+  no longer exists.
+
+  **The two scripts are gone from the repository's history as well**, not only from
+  `HEAD`: every commit and every tag was rewritten so that no reachable revision
+  contains them. The version tags therefore point at new commits, which is why the
+  release workflow now tolerates being re-run for a version PyPI already has.
 
 ### Changed
 
+- **The release workflow no longer fails when re-run for a published version.**
+  `pypa/gh-action-pypi-publish` is given `skip-existing: true`, and the GitHub
+  release job runs even when the publish step had nothing to upload. Re-tagging an
+  old commit is exactly that case, and without this a rewritten tag would have
+  produced a red publish job *and* left the release page un-rebuilt, since the
+  release is created downstream of the publish.
+
+  Deliberately not a pre-flight "is this version on PyPI?" query: the two available
+  queries disagree. For this project the per-version JSON endpoint reported a single
+  release while every artifact of all four versions still downloaded, and the
+  `/simple/` index served both answers at different times. Guessing from a cached
+  answer risks attempting an upload PyPI will reject; the publisher knows what it is
+  uploading.
 - **The pre-commit ruff pin moved from `v0.6.9` to `v0.16.9`,** and the `dev` extra
   floor from `ruff>=0.6` to `ruff>=0.16`, so both agree with the release CI installs.
   A stale pin here is not merely a missing lint: ruff's *formatter* output changes
@@ -400,7 +425,8 @@ distribution name carries the long form: the import and the console script are b
   and Windows.
 - 265 tests, including every docstring example.
 
-[Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/yaoyuxiang-gnn/agent-guard/compare/v0.2.0...v0.2.1
