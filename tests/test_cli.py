@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -14,6 +15,15 @@ from unittest import mock
 from agentguard import DEFAULT_PRICING, Guard
 from agentguard.cli import main
 from agentguard.config import CONFIG_ENV_VAR, CONFIG_TRUST_ENV_VAR, user_config_path
+
+#: Repo root, for the tests that read the README rather than a fixture.
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _bundled_count(line: str) -> str | None:
+    """The ``N`` in ``N models bundled ...``, or ``None`` if the shape changed."""
+    match = re.match(r"^(\d+) models bundled", line.strip())
+    return match.group(1) if match else None
 
 
 def run_cli(*argv: str) -> tuple[int, str, str]:
@@ -427,6 +437,30 @@ class ConfiguredPricingTests(unittest.TestCase):
         # every price-table refresh into a test failure that says nothing about
         # whether the CLI is correct.
         self.assertIn(f"{len(DEFAULT_PRICING)} models bundled", out)
+
+    def test_readme_transcript_matches_the_cli(self) -> None:
+        # The README shows real `agentguard pricing` output, and 0.3.0 shipped
+        # with it claiming 113 models while the table held 119 -- a refresh added
+        # entries after the transcript was written, and nothing noticed. The CLI
+        # is run for real here and the two numbers are compared, not restated.
+        _code, out, _ = run_cli("pricing", "--no-config")
+        live = _bundled_count(out.splitlines()[0])
+        self.assertIsNotNone(live, "the CLI no longer reports a bundled-model count")
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        quoted = [
+            line.strip()
+            for line in readme.splitlines()
+            if re.match(r"^\d+ models bundled", line.strip())
+        ]
+        self.assertTrue(quoted, "the README no longer quotes an `agentguard pricing` run")
+        for line in quoted:
+            with self.subTest(quoted=line):
+                self.assertEqual(
+                    _bundled_count(line),
+                    live,
+                    "the README's bundled-model count no longer matches the CLI",
+                )
 
     def test_json_output_is_machine_readable(self) -> None:
         code, out, _ = run_cli("pricing", "--json")

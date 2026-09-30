@@ -363,7 +363,7 @@ guard = Guard(
 
 ```bash
 $ agentguard pricing
-113 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-09)
+119 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-09)
 
   model                        input    output    cached  source
   claude-3-5-haiku              $0.8        $4     $0.08  builtin
@@ -519,7 +519,7 @@ pytest --cov=agentguard                     # 如果你更喜欢 pytest
 python examples/basic.py
 ```
 
-550 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+551 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

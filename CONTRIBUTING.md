@@ -11,7 +11,7 @@ No install is required to run the test suite or the examples.
 git clone https://github.com/yaoyuxiang-gnn/agent-guard
 cd agent-guard
 
-python -m unittest discover -s tests -t .   # 550 tests, no network, no fixtures
+python -m unittest discover -s tests -t .   # 551 tests, no network, no fixtures
 python examples/basic.py
 ```
 

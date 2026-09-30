@@ -400,7 +400,7 @@ Inspect what is actually in effect before trusting a number:
 
 ```bash
 $ agentguard pricing
-113 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-09)
+119 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-09)
 
   model                        input    output    cached  source
   claude-3-5-haiku              $0.8        $4     $0.08  builtin
@@ -591,7 +591,7 @@ pytest --cov=agentguard                     # if you prefer pytest
 python examples/basic.py
 ```
 
-550 tests, no network, no fixtures to download. See [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md).
+551 tests, no network, no fixtures to download. See [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md).
 
 ---
 

@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The README claimed a bundled-model count the CLI did not print.** 0.3.0's
+  `agentguard pricing` transcript said 113 models while the table held 119 — the
+  refresh added six entries (the `claude-mythos` pair and `grok-4.20`) after the
+  transcript was written, and nothing compared the two. Both READMEs are corrected,
+  and a test now runs the CLI and compares its count against the quoted one, so the
+  next refresh cannot reintroduce the drift. The published 0.3.0 page keeps the
+  wrong number: PyPI files are immutable, so this lands in the next release.
 
 ## [0.3.0] - 2026-09-30
 
