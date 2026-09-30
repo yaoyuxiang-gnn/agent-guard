@@ -9,11 +9,9 @@ zero dependencies, no I/O, never guess a number, fail at construction.
 
 ---
 
-## Next (0.3)
+## Shipped in 0.3
 
-*Everything planned for 0.3 has shipped. 0.3 is unreleased as a version — the work
-below landed across 0.2.x and the unreleased section of the changelog — so this
-heading stays until a release takes the number.*
+*Everything planned for 0.3 is in 0.3.0. The next section is what comes after it.*
 
 ### ~~Per-tag and per-tool cost attribution~~ — shipped
 

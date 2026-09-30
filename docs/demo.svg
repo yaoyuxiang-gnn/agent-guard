@@ -110,7 +110,7 @@
 <tspan fill="#30363d">----------------------------------------------------------------</tspan>
 </text>
 <text xml:space="preserve" x="18" y="561" opacity="0"><animate attributeName="opacity" dur="12.34s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.6126;1"/>
-<tspan fill="#c9d1d9">  prices as of 2026-01 (indicative only)</tspan>
+<tspan fill="#c9d1d9">  prices as of 2026-09 (indicative only)</tspan>
 </text>
 <text xml:space="preserve" x="18" y="580"><tspan fill="#3fb950">$ </tspan><tspan class="cursor" fill="#c9d1d9">_</tspan></text>
 </svg>
