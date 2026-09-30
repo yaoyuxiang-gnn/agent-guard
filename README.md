@@ -320,7 +320,7 @@ the serialised prompt.
 
 Every docstring example in the package runs as a test, so the documentation cannot
 drift from the behaviour. `python -m unittest discover -s tests -t .` runs the whole
-suite — 563 tests, no network, no fixtures.
+suite — 572 tests, no network, no fixtures.
 
 ## License
 

@@ -11,7 +11,7 @@ No install is required to run the test suite or the examples.
 git clone https://github.com/yaoyuxiang-gnn/agent-guard
 cd agent-guard
 
-python -m unittest discover -s tests -t .   # 563 tests, no network, no fixtures
+python -m unittest discover -s tests -t .   # 572 tests, no network, no fixtures
 python examples/basic.py
 ```
 
@@ -158,16 +158,12 @@ absolute URL**, and the hero image points at `raw.githubusercontent.com`, which 
 SVG with the right content type. `README.zh-CN.md` is only ever rendered by GitHub and
 keeps relative links, which survive a repository rename.
 
-Two assets are generated from real program output and go stale when the report
-format changes:
-
-```bash
-make demo      # docs/demo.svg, from examples/basic.py
-make social    # docs/social-preview.png, needs Pillow
-```
-
-Regenerate them in the same change that alters what a report prints, or the README
-shows a screenshot of a program that no longer exists.
+`docs/demo.svg` is a screenshot of real program output — the report printed by
+`examples/basic.py` — so it goes stale when the report format changes. It is a
+checked-in asset with no generator in this repository: the script that produced it
+is maintainer tooling and is deliberately not shipped, because a library repository
+should carry the library. If a change alters what a report prints, say so in the
+pull request and the maintainer will refresh the image.
 
 ## Commit and pull request conventions
 

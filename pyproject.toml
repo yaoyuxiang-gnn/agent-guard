@@ -74,12 +74,17 @@ packages = ["src/agentguard"]
 # An sdist is immutable once it is on PyPI, so everything a downstream packager,
 # a distro, or a reader of the source archive might reasonably want is included
 # here -- the policies as much as the code.
+#
+# What is deliberately absent is maintainer scaffolding: the scripts that rendered
+# the README's screenshot and the repository's social-preview card are not part of
+# the library and do not ship. This list is exhaustive for that reason -- anything
+# not named here is not published, so a new top-level directory cannot reach a
+# release by default, and `tests/test_packaging.py` holds the line.
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
     "/tests",
     "/examples",
-    "/tools",
     "/docs",
     "/README.md",
     "/README.zh-CN.md",

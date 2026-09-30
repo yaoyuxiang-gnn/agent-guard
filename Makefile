@@ -1,6 +1,6 @@
 # Convenience wrappers. The only target you actually need is `test`, and it
 # requires nothing installed.
-.PHONY: help test test-pytest lint format typecheck examples demo social coverage build clean all
+.PHONY: help test test-pytest lint format typecheck examples coverage build clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -35,12 +35,6 @@ examples:  ## Run every example end to end
 	PYTHONPATH=src python examples/langgraph_demo.py
 	PYTHONPATH=src python examples/custom_models.py
 	PYTHONPATH=src python examples/checkpointing.py
-
-demo:  ## Regenerate docs/demo.svg from the real output of examples/basic.py
-	python tools/make_demo_svg.py
-
-social:  ## Regenerate docs/social-preview.png for the GitHub social preview (needs Pillow)
-	python tools/make_social_preview.py
 
 build:  ## Build sdist and wheel into dist/
 	python -m build

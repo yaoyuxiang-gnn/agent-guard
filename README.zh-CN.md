@@ -262,7 +262,7 @@ agentguard config path               # 配置从哪读、忽略了什么
 | [ROADMAP.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md) | 后续计划 |
 | [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md) | 这个库遵守的四条约束 |
 
-包里每一个 docstring 示例都会作为测试运行，所以文档不可能和行为脱节。`python -m unittest discover -s tests -t .` 跑完整套件——563 个测试，不联网，不需要下载任何 fixture。
+包里每一个 docstring 示例都会作为测试运行，所以文档不可能和行为脱节。`python -m unittest discover -s tests -t .` 跑完整套件——572 个测试，不联网，不需要下载任何 fixture。
 
 ## 许可证
 

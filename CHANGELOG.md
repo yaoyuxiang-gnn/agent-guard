@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Removed
+
+- **The asset-generation scripts no longer ship, and one maintainer-only asset is
+  gone from the repository.** `tools/make_demo_svg.py` and
+  `tools/make_social_preview.py` rendered the README's screenshot and the
+  repository's social-preview card — repository furniture, not library code — and
+  `docs/social-preview.png` existed only for the second one to produce.
+
+  Scope of the change: the **wheel was never affected**, because it already packages
+  `src/agentguard` alone, so `pip install` was always unaffected. What changes is the
+  **sdist**, which shipped `/tools` and a `docs/` holding the preview card alongside
+  the real documentation. `tools/` is out of the include list, and `docs/` is down to
+  the two files the project actually documents with: `DETAILS.md` and the README's
+  screenshot.
+
+  The include list is now exhaustive on purpose — anything not named there is not
+  published — so a new top-level directory cannot reach a release by default.
+  `tests/test_packaging.py` pins that decision, including what a wholesale `docs/`
+  include would otherwise let through; verified by restoring the deleted files and
+  watching `test_docs_carries_only_real_documentation` fail on exactly the preview
+  card.
+
+  `docs/demo.svg` stays, and is now a checked-in asset with no generator in the
+  repository. CONTRIBUTING says so, rather than pointing at a `make demo` target that
+  no longer exists. Both scripts remain in git history if they are ever wanted back.
+
+### Changed
+
+- **The pre-commit ruff pin moved from `v0.6.9` to `v0.16.9`,** and the `dev` extra
+  floor from `ruff>=0.6` to `ruff>=0.16`, so both agree with the release CI installs.
+  A stale pin here is not merely a missing lint: ruff's *formatter* output changes
+  between versions, so the hook could rewrite a file into a shape that
+  `ruff format --check` then rejects — a failure with no visible cause.
 
 ## [0.3.1] - 2026-09-30
 
