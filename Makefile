@@ -34,6 +34,7 @@ examples:  ## Run every example end to end
 	PYTHONPATH=src python examples/streaming.py
 	PYTHONPATH=src python examples/langgraph_demo.py
 	PYTHONPATH=src python examples/custom_models.py
+	PYTHONPATH=src python examples/checkpointing.py
 
 demo:  ## Regenerate docs/demo.svg from the real output of examples/basic.py
 	python tools/make_demo_svg.py

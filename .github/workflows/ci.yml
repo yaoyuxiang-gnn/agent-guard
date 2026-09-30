@@ -64,7 +64,8 @@ jobs:
             examples/report_demo.py \
             examples/streaming.py \
             examples/langgraph_demo.py \
-            examples/custom_models.py
+            examples/custom_models.py \
+            examples/checkpointing.py
           do
             echo "::group::$example"
             if python "$example"; then

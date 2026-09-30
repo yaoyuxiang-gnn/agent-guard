@@ -17,7 +17,7 @@
 
 <br>
 
-<img src="docs/demo.svg" width="591" alt="终端里运行 examples/basic.py：预算 0.05 美元的 agent 在第三次调用时被拦下，报告显示预算条已达 114%。">
+<img src="https://raw.githubusercontent.com/yaoyuxiang-gnn/agent-guard/main/docs/demo.svg" width="591" alt="终端里运行 examples/basic.py：预算 0.05 美元的 agent 在第三次调用时被拦下，报告显示预算条已达 114%。">
 
 </div>
 
@@ -363,11 +363,11 @@ guard = Guard(
 
 ```bash
 $ agentguard pricing
-41 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-01)
+113 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-09)
 
   model                        input    output    cached  source
   claude-3-5-haiku              $0.8        $4     $0.08  builtin
-  claude-3-5-sonnet               $3       $15      $0.3  builtin
+  claude-opus-5.5                 $4       $20      $0.2  builtin
   ...
   gpt-4o                          $2        $8         -  config
   my-finetune-v3                  $3       $12      $0.3  config
@@ -432,7 +432,7 @@ $ agentguard config list
 
 ```
 $ agentguard pricing gpt-4o
-gpt-4o  (USD per 1M tokens, snapshot 2026-01)
+gpt-4o  (USD per 1M tokens, snapshot 2026-09)
 
   input        $2.5 / 1M
   output        $10 / 1M
@@ -500,6 +500,7 @@ gpt-4o  (USD per 1M tokens, snapshot 2026-01)
 | [`examples/langgraph_demo.py`](examples/langgraph_demo.py) | LangGraph 回调：成本记账 + 工具死循环检测 |
 | [`examples/report_demo.py`](examples/report_demo.py) | 一份真实的多模型运行报告 |
 | [`examples/custom_models.py`](examples/custom_models.py) | 自定义模型、价格、别名与禁用内置条目 |
+| [`examples/checkpointing.py`](examples/checkpointing.py) | 检查点：把已花掉的钱带进下一次运行 |
 | [ROADMAP.md](ROADMAP.md) | 后续计划 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
 
@@ -518,7 +519,7 @@ pytest --cov=agentguard                     # 如果你更喜欢 pytest
 python examples/basic.py
 ```
 
-474 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+550 个测试，不联网，不需要下载任何 fixture。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

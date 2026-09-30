@@ -11,6 +11,10 @@ zero dependencies, no I/O, never guess a number, fail at construction.
 
 ## Next (0.3)
 
+*Everything planned for 0.3 has shipped. 0.3 is unreleased as a version — the work
+below landed across 0.2.x and the unreleased section of the changelog — so this
+heading stays until a release takes the number.*
+
 ### ~~Per-tag and per-tool cost attribution~~ — shipped
 
 `report().by_tag` and `report().by_tool` answer "which tool is eating my budget?"
@@ -35,14 +39,26 @@ Streaming responses are wrapped in a `GuardedStream` that records usage once,
 when the stream is drained; Anthropic's `messages.stream()` manager and async
 clients are covered the same way. See `examples/streaming.py`.
 
-### `Guard.snapshot()` for checkpointing
+### ~~`Guard.snapshot()` for checkpointing~~ — shipped
 
-An agent that checkpoints its own state should be able to checkpoint its spend too,
-so a resumed run does not start with a fresh budget. Requires a serialisable
-counter form; the record list is too heavy for the purpose. The open questions are
-what a restored report can honestly claim (per-model totals, but not the records),
-and whether detector windows should survive a checkpoint — a loop that spans one is
-exactly the kind that costs money.
+`Guard.snapshot()` / `Guard.from_snapshot()` let an agent that already checkpoints
+its own state checkpoint its spend too, so a resumed run keeps counting against what
+it already spent. The format is counters rather than records — calls grouped by
+`(model, tag, tool)` — which keeps every breakdown total exact while dropping the
+per-call log, and the report says how many calls it inherited instead of passing
+them off as its own. See `examples/checkpointing.py`.
+
+Two questions this item left open, now answered:
+
+- **Detector windows do survive a checkpoint.** A loop that spans one is still a
+  loop, so the four built-in detectors serialise their windows. Wall-clock time is
+  the one thing that deliberately does *not* survive: `max_seconds` caps how long
+  the current process may run, so restoring an elapsed duration would make a resumed
+  run trip on time it never spent. Money and steps accumulate; the clock restarts.
+- **A checkpoint that cannot be read exactly is refused, not half-applied.** A
+  wrong format version, a negative count, or a call count that disagrees with its
+  groups raises at restore. A budget that restores approximately is a budget that
+  might not stop — and that is the one outcome worth being strict about.
 
 ---
 
@@ -64,6 +80,11 @@ trust — landed as the JSON config file (`agentguard config set ...`, see the
 README). A downloaded snapshot would be just another entry in the same merge chain,
 so the remaining work is the fetch itself: opt-in, checksummed, and written to the
 user config directory rather than imported over the network.
+
+This is also the honest fix for the bundled table's real weakness. A refresh
+mechanism makes staleness a two-command problem; until it exists, a model newer than
+the snapshot is reported as *unpriced* and excluded from the budget, which is safe
+but not useful.
 
 ### Additional detectors, if they earn their place
 

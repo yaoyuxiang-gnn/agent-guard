@@ -103,7 +103,7 @@ agent-guard  nightly-indexer
     or pass Guard(pricing={...}) in code.
 
 ----------------------------------------------------------------
-  prices as of 2026-01 (indicative only)
+  prices as of 2026-09 (indicative only)
 ```
 
 Note the last block. **agent-guard never guesses a price.** A model it does not
@@ -400,11 +400,11 @@ Inspect what is actually in effect before trusting a number:
 
 ```bash
 $ agentguard pricing
-41 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-01)
+113 models bundled, 2 configured (USD per 1M tokens, snapshot 2026-09)
 
   model                        input    output    cached  source
   claude-3-5-haiku              $0.8        $4     $0.08  builtin
-  claude-3-5-sonnet               $3       $15      $0.3  builtin
+  claude-opus-5.5                 $4       $20      $0.2  builtin
   ...
   gpt-4o                          $2        $8         -  config
   my-finetune-v3                  $3       $12      $0.3  config
@@ -482,7 +482,7 @@ $ agentguard config list
 
 ```
 $ agentguard pricing gpt-4o
-gpt-4o  (USD per 1M tokens, snapshot 2026-01)
+gpt-4o  (USD per 1M tokens, snapshot 2026-09)
 
   input        $2.5 / 1M
   output        $10 / 1M
@@ -571,6 +571,7 @@ Being explicit about scope is cheaper than a GitHub issue.
 | [`examples/langgraph_demo.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/langgraph_demo.py) | LangGraph callbacks: cost accounting plus tool-loop detection |
 | [`examples/report_demo.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/report_demo.py) | A realistic multi-model run report |
 | [`examples/custom_models.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/custom_models.py) | Custom models, prices, aliases and disabled entries |
+| [`examples/checkpointing.py`](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/examples/checkpointing.py) | Checkpoint a run's spend and resume from it |
 | [ROADMAP.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md) | What is planned next |
 | [CHANGELOG.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CHANGELOG.md) | Release history |
 
@@ -590,7 +591,7 @@ pytest --cov=agentguard                     # if you prefer pytest
 python examples/basic.py
 ```
 
-474 tests, no network, no fixtures to download. See [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md).
+550 tests, no network, no fixtures to download. See [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md).
 
 ---
 
