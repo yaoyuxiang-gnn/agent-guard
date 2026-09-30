@@ -14,8 +14,12 @@ repos:
       - id: mixed-line-ending
         args: [--fix=lf]
 
+  # Kept in step with CI, which installs the latest ruff. A stale pin here does
+  # not merely miss new lints: ruff's *formatter* output changes between versions,
+  # so the hook could rewrite a file into a shape `ruff format --check` then
+  # rejects -- a failure that looks like it came from nowhere.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.16.9
     hooks:
       - id: ruff
         args: [--fix]
