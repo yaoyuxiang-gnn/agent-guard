@@ -39,6 +39,7 @@ Python 3.10+, no runtime dependencies — not even a provider SDK.
 > **Jump to:** [See it work](#see-it-work) · [What it catches](#what-it-catches) ·
 > [Wired into your stack](#wired-into-your-stack) · [Models it doesn't know](#models-it-doesnt-know) ·
 > [Running it in CI](#running-it-in-ci) · [Honest answers](#honest-answers) ·
+> [API reference](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/API.md) ·
 > [All the details](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md)
 
 ---
@@ -312,15 +313,18 @@ the serialised prompt.
 
 | | |
 |---|---|
-| [docs/DETAILS.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md) | Everything: every detector and its tuning, the full pricing config and its trust model, the checkpoint format, the complete CLI reference, design principles |
+| [docs/API.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/API.md) | Every public name: `Guard` and `Step`, recording, loop detection, accounting, pricing, config, exceptions, adapters, decorators, the CLI |
+| [docs/DETAILS.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md) | The reasoning: every detector and its tuning, the pricing config's trust model, the checkpoint format, design principles |
 | [examples/](https://github.com/yaoyuxiang-gnn/agent-guard/tree/main/examples) | Eight runnable programs — budget cap, all four detectors, wrapped client, streaming, LangGraph, custom models, checkpointing, and a realistic report |
 | [CHANGELOG.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CHANGELOG.md) | Release history |
 | [ROADMAP.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md) | What is planned next |
 | [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md) | The four constraints the library is built to |
 
 Every docstring example in the package runs as a test, so the documentation cannot
-drift from the behaviour. `python -m unittest discover -s tests -t .` runs the whole
-suite — 572 tests, no network, no fixtures.
+drift from the behaviour — and the API reference is checked against the library the
+same way: its signature blocks, its export table and its exception tree are all
+asserted in `tests/test_api_reference.py`. `python -m unittest discover -s tests -t .`
+runs the whole suite — 588 tests, no network, no fixtures.
 
 ## License
 

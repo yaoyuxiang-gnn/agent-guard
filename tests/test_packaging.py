@@ -138,7 +138,7 @@ class SdistContentsTests(unittest.TestCase):
         # check that would have caught the social-preview card, which was maintainer
         # artwork reachable only by a script that is not part of the library.
         docs = sorted(p.name for p in (ROOT / "docs").iterdir() if p.is_file())
-        self.assertEqual(docs, ["DETAILS.md", "demo.svg"])
+        self.assertEqual(docs, ["API.md", "DETAILS.md", "demo.svg"])
 
     def test_readme_only_embeds_assets_that_ship(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

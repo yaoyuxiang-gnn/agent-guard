@@ -7,7 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`docs/API.md`: a reference for every public name.** The README is a tour and
+  `DETAILS.md` explains the reasoning, but nothing listed the interface —
+  `Guard`'s 19 arguments, the parameters of `record()`, which exception carries
+  which attribute, what is importable from where. A reader who wanted to *look
+  something up* had to read the source.
+
+  Organised by area rather than alphabetically, because that is how it gets used:
+  Guard, Step, recording, checkpointing, reporting, loop detection, accounting,
+  pricing, pricing config, exceptions, adapters, integrations, decorators, CLI.
+  Each section gives the signature with every parameter named, then the behaviour
+  worth knowing before relying on it — the modes of `on_trip`, that
+  `CallRecord.cost_usd` is `None` rather than `0.0` for an unpriced call, that
+  version stripping will never bill `gpt-5.6-sol` at the `gpt-5` rate.
+
+  One entry states a limitation plainly rather than a feature: `preflight()` returns
+  `0.0` and does **not** refuse for a model with no price, because an unbounded cost
+  cannot be shown to exceed the budget. Anyone trusting preflight as a hard gate
+  should know that before they rely on it.
+
+- **`tests/test_api_reference.py`, which checks the reference against the library.**
+  A hand-written API document goes stale silently — nothing imports it, so nothing
+  breaks when a parameter is renamed. Fifteen tests read the document and compare:
+  every name in the export table is really exported and no exported name is missing
+  from it, every submodule name lives in the module claimed, every documented
+  signature's parameters exist on the real callable, the exception tree matches, and
+  every public member of the documented classes is mentioned somewhere.
+
+  The examples are executed, not merely printed: each carries its expected output,
+  and `tests/test_doctests.py` runs them the same way it runs docstring examples, so
+  the `12.5` the reference says `preflight()` returns is asserted against the real
+  return value. The blocks are fragments — only the first has its imports — so the
+  runner assembles a namespace from the document's `import` lines plus the whole
+  public API, which is what a reader would have in scope.
+
+  Writing these found five genuine omissions immediately — `PriceTable.items()`,
+  `Usage.is_empty`, `LimitStatus.exceeded`, `LimitStatus.fraction` and
+  `PricingConfig.is_empty` were all public and all undocumented — plus an unescaped
+  `|` that was breaking one of the reference's own tables. The signature parser is
+  deliberately conservative: it treats a call as a declaration only when the shape
+  says so, so `guard.progress({"rows_written": 120})` in an example is not read as a
+  signature, and it fails loudly rather than silently checking nothing.
 
 ## [0.3.2] - 2026-09-30
 

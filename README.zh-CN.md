@@ -33,6 +33,7 @@ print(guard.report())
 > **快速跳转：** [看它跑起来](#看它跑起来) · [它能拦下什么](#它能拦下什么) ·
 > [接进你的技术栈](#接进你的技术栈) · [它不认识的模型](#它不认识的模型) ·
 > [放进-ci](#放进-ci) · [诚实的回答](#诚实的回答) ·
+> [接口文档](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/API.md) ·
 > [全部细节](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md)
 
 ---
@@ -256,13 +257,14 @@ agentguard config path               # 配置从哪读、忽略了什么
 
 | | |
 |---|---|
-| [docs/DETAILS.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md) | 全部内容：每个检测器及其调参、完整的价格配置与信任模型、检查点格式、完整 CLI 参考、设计原则 |
+| [docs/API.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/API.md) | 每个公开名称：`Guard` 与 `Step`、记录、死循环检测、记账、定价、配置、异常、适配器、装饰器、命令行 |
+| [docs/DETAILS.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md) | 背后的理由：每个检测器及其调参、价格配置的信任模型、检查点格式、设计原则 |
 | [examples/](https://github.com/yaoyuxiang-gnn/agent-guard/tree/main/examples) | 八个可直接运行的程序——预算上限、四个检测器、包裹客户端、流式、LangGraph、自定义模型、检查点，以及一份真实报告 |
 | [CHANGELOG.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CHANGELOG.md) | 版本历史 |
 | [ROADMAP.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md) | 后续计划 |
 | [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md) | 这个库遵守的四条约束 |
 
-包里每一个 docstring 示例都会作为测试运行，所以文档不可能和行为脱节。`python -m unittest discover -s tests -t .` 跑完整套件——572 个测试，不联网，不需要下载任何 fixture。
+包里每一个 docstring 示例都会作为测试运行，所以文档不可能和行为脱节——接口文档也用同样的标准核对：它的签名块、导出表、异常树都在 `tests/test_api_reference.py` 里被断言。`python -m unittest discover -s tests -t .` 跑完整套件——588 个测试，不联网，不需要下载任何 fixture。
 
 ## 许可证
 
