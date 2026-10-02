@@ -117,6 +117,19 @@ and still produces a report.
 | `max_tokens=500_000` | Input + output tokens exceed the allowance |
 | `max_steps=25` | A 26th `guard.step()` is opened |
 | `max_seconds=300` | Wall-clock time since the guard was created |
+| `scoped_budgets={"tool:search": 1.0}` | One tool, or one tag, exceeds its own share |
+
+A run-level ceiling can only tell you the run got expensive. It cannot tell you
+*which part* of it did, so one tool in a retry storm can spend the whole allowance
+before `max_usd` notices — and the answer to "what ate the budget?" arrives in a
+report you read afterwards. A scoped budget answers it while it is happening, by
+naming the tool:
+
+```text
+  limits
+    budget     $0.0125 / $1                  1.2%  [................]
+  ! tool:fetch $0.0125 / $0.012            104.2%  [################]
+```
 
 The four detectors, and what each one is actually for:
 
@@ -210,6 +223,21 @@ def summarise(url: str) -> str:
 one caller exhausting a budget must not stop the next. Pass `guard=` a shared guard
 when spend should accumulate across calls.
 
+The decorator covers `async def` too: the guard stays entered across every `await`
+rather than only until the coroutine object is created, so `current_guard()` is live
+inside an async body — and inside an async generator for the whole iteration.
+
+**Fanning work out across threads?** No thread inherits a `contextvars` context, so a
+call made on a pool worker is still *counted* — the money is never lost — but belongs
+to no step and no tool, and a `scoped_budgets` cap on that tool never fires. Two ways
+to carry the attribution over, both captured where you call them:
+
+```python
+with guard.step(tag="fan-out"), guard.tool("fetch"):
+    results = list(pool.map(guard.bind(fetch), urls))   # per call
+    # or: with guard.context():  ...                    # per block, inside the worker
+```
+
 **Refuse a call before paying for it.** A post-hoc check can only report overspend;
 `preflight()` refuses a call whose worst case will not fit in what is left:
 
@@ -278,6 +306,8 @@ agentguard report run.json           # render a report saved by guard.save(...)
 agentguard report run.json --json
 agentguard pricing                   # effective table, with a source per model
 agentguard pricing gpt-4o
+agentguard pricing --update          # refresh prices from a public catalogue
+agentguard pricing --status          # is a snapshot in effect, and from where
 agentguard config path               # where config is read from, what is ignored
 ```
 
@@ -292,9 +322,17 @@ to an old Python, or shipped inside a Lambda without touching a lockfile.
 retire a model the day after. Retired models keep their last published price rather
 than being dropped, because removing a name silently turns every call to it unpriced.
 Anything you bill on should be verified, and anything you depend on should be
-configured. The honest fix — an opt-in, checksummed `pricing --update` — is not built
-yet; it is first on the
-[roadmap](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md).
+configured. When you would rather not wait for a release, refresh it on purpose:
+
+```bash
+agentguard pricing --update     # one opt-in download, checksummed and cached
+```
+
+That is the only command in this library that touches the network. Nothing fetches
+prices at import, on a timer, or in the background — and the result merges
+*underneath* your config, so a public catalogue can never override a rate you set
+deliberately. A snapshot that has been edited or truncated fails its checksum and is
+refused rather than billed. See [the details](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md#refreshing-the-table).
 
 **What it is not.** Not an observability platform (nothing is sent anywhere, there is
 no server and no background thread), not a proxy (it cannot see traffic it was not
@@ -315,7 +353,7 @@ the serialised prompt.
 |---|---|
 | [docs/API.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/API.md) | Every public name: `Guard` and `Step`, recording, loop detection, accounting, pricing, config, exceptions, adapters, decorators, the CLI |
 | [docs/DETAILS.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md) | The reasoning: every detector and its tuning, the pricing config's trust model, the checkpoint format, design principles |
-| [examples/](https://github.com/yaoyuxiang-gnn/agent-guard/tree/main/examples) | Eight runnable programs — budget cap, all four detectors, wrapped client, streaming, LangGraph, custom models, checkpointing, and a realistic report |
+| [examples/](https://github.com/yaoyuxiang-gnn/agent-guard/tree/main/examples) | Ten runnable programs — budget cap, all four detectors, wrapped client, streaming, LangGraph, custom models, checkpointing, scoped budgets, a price refresh, and a realistic report |
 | [CHANGELOG.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CHANGELOG.md) | Release history |
 | [ROADMAP.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md) | What is planned next |
 | [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md) | The four constraints the library is built to |
@@ -324,7 +362,7 @@ Every docstring example in the package runs as a test, so the documentation cann
 drift from the behaviour — and the API reference is checked against the library the
 same way: its signature blocks, its export table and its exception tree are all
 asserted in `tests/test_api_reference.py`. `python -m unittest discover -s tests -t .`
-runs the whole suite — 588 tests, no network, no fixtures.
+runs the whole suite — 746 tests, no network, no fixtures.
 
 ## License
 

@@ -11,11 +11,13 @@ import tempfile
 import threading
 import unittest
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace as NS
 
 from agentguard import (
     BudgetExceeded,
+    BudgetScopeExceeded,
     Detector,
     Guard,
     GuardConfigError,
@@ -610,6 +612,441 @@ class LifecycleTests(unittest.TestCase):
         guard.reset()
         with self.assertRaises(GuardConfigError):
             guard.record("mystery", input_tokens=1)
+
+
+class UnpricedModelPolicyTests(unittest.TestCase):
+    """``on_unknown_model="error"`` must not cost the guard its bookkeeping.
+
+    The call has already been made by the time agent-guard sees it, so it has
+    already been paid for. An error raised *instead of* the record leaves the report
+    claiming the call never happened — the one thing a cost report must not do, and
+    by ``SECURITY.md``'s own definition a guard bypass.
+    """
+
+    def test_the_refused_call_is_still_counted(self) -> None:
+        guard = Guard(max_usd=1.0, use_config=False, on_unknown_model="error")
+        with self.assertRaises(GuardConfigError):
+            guard.record("mystery-model", input_tokens=1_000, output_tokens=500)
+        self.assertEqual(guard.calls, 1)
+        self.assertEqual(guard.spent_usd, 0.0)  # unknown price, not a guessed one
+
+    def test_the_report_names_the_model_it_could_not_price(self) -> None:
+        guard = Guard(max_usd=1.0, use_config=False, on_unknown_model="error")
+        with self.assertRaises(GuardConfigError):
+            guard.record("mystery-model", input_tokens=1_000, output_tokens=500)
+        report = guard.report()
+        self.assertEqual(report.calls, 1)
+        self.assertEqual(report.unpriced_calls, 1)
+        self.assertEqual(report.unpriced_models, ("mystery-model",))
+        self.assertIn("mystery-model", report.render(ascii_only=True))
+
+    def test_a_priced_call_recorded_alongside_is_still_billed(self) -> None:
+        guard = Guard(max_usd=100.0, use_config=False, on_unknown_model="error")
+        guard.record("gpt-4o", input_tokens=1_000_000)
+        with self.assertRaises(GuardConfigError):
+            guard.record("mystery-model", input_tokens=1_000)
+        self.assertEqual(guard.calls, 2)
+        self.assertAlmostEqual(guard.spent_usd, 2.5)
+        self.assertEqual(guard.report().unpriced_calls, 1)
+
+    def test_a_budget_trip_still_wins_when_the_priced_call_crosses_the_cap(self) -> None:
+        # A priced call is recorded, the limit is re-evaluated, and *that* is what
+        # surfaces — the budget failure is not masked by a later pricing failure.
+        guard = Guard(max_usd=0.001, use_config=False, on_unknown_model="error")
+        with self.assertRaises(BudgetExceeded):
+            guard.record("gpt-4o", input_tokens=1_000_000)
+        self.assertEqual(guard.calls, 1)
+
+    def test_the_guard_still_refuses_the_next_call_after_the_error(self) -> None:
+        guard = Guard(max_usd=1.0, use_config=False, on_unknown_model="error")
+        with self.assertRaises(GuardConfigError):
+            guard.record("mystery-model", input_tokens=1)
+        with self.assertRaises(GuardConfigError):
+            guard.record("another-mystery", input_tokens=1)
+        self.assertEqual(guard.calls, 2)
+
+    def test_warn_mode_records_without_raising(self) -> None:
+        guard = Guard(max_usd=1.0, use_config=False, on_unknown_model="warn")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            guard.record("mystery-model", input_tokens=1_000)
+        self.assertEqual(guard.calls, 1)
+        self.assertEqual(len(caught), 1)
+
+    def test_ignore_mode_is_silent_and_still_counts(self) -> None:
+        guard = Guard(max_usd=1.0, use_config=False, on_unknown_model="ignore")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            guard.record("mystery-model", input_tokens=1_000)
+        self.assertEqual(guard.calls, 1)
+        self.assertEqual(caught, [])
+
+    def test_a_call_with_no_identifiable_model_says_so(self) -> None:
+        # A response carrying no model name at all lands on "unknown", and the
+        # warning has to name the real problem — an extraction failure — rather than
+        # telling the reader to price a model called "unknown".
+        guard = Guard(max_usd=1.0, use_config=False, on_unknown_model="warn")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            guard.record({"usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+        self.assertEqual(guard.calls, 1)
+        self.assertEqual(len(caught), 1)
+        self.assertIn("could not determine the model", str(caught[0].message))
+
+
+class ScopedBudgetTests(unittest.TestCase):
+    """A whole-run cap cannot say *which* part of a run is too expensive."""
+
+    def test_a_tool_cap_trips_and_names_the_tool(self) -> None:
+        # The cap is checked as each call is recorded, so it fires on the call that
+        # crosses it rather than at the end of the block. The limit is stated below
+        # the first call's cost + the second's, so the boundary is not load-bearing.
+        guard = Guard(
+            max_usd=100.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:search": 0.004},
+        )
+        with self.assertRaises(BudgetScopeExceeded) as ctx, guard.tool("search"):
+            guard.record("gpt-4o", input_tokens=1_000)  # $0.0025, under
+            guard.record("gpt-4o", input_tokens=1_000)  # $0.0050, over
+        self.assertEqual(ctx.exception.scope, "tool")
+        self.assertEqual(ctx.exception.name, "search")
+        self.assertAlmostEqual(ctx.exception.spent_usd, 0.005)
+        self.assertAlmostEqual(ctx.exception.limit_usd, 0.004)
+
+    def test_a_tag_cap_trips_and_names_the_tag(self) -> None:
+        guard = Guard(
+            max_usd=100.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tag:summarise": 0.001},
+        )
+        with self.assertRaises(BudgetScopeExceeded) as ctx, guard.step(tag="summarise"):
+            guard.record("gpt-4o", input_tokens=1_000)  # $0.0025, over $0.001
+        self.assertEqual(ctx.exception.scope, "tag")
+        self.assertEqual(ctx.exception.name, "summarise")
+
+    def test_the_tripping_call_is_still_accounted(self) -> None:
+        guard = Guard(
+            max_usd=100.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:search": 0.001},
+        )
+        with self.assertRaises(BudgetScopeExceeded), guard.tool("search"):
+            guard.record("gpt-4o", input_tokens=1_000)
+        self.assertEqual(guard.calls, 1)
+        self.assertAlmostEqual(guard.spent_usd, 0.0025)
+
+    def test_another_scope_is_unaffected(self) -> None:
+        guard = Guard(
+            max_usd=100.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:search": 0.001},
+        )
+        with guard.tool("write"):
+            guard.record("gpt-4o", input_tokens=1_000_000)
+        self.assertFalse(guard.stopped)
+
+    def test_the_run_budget_is_reported_before_the_scope_budget(self) -> None:
+        # When both are over, "the run is over budget" is the more urgent fact.
+        guard = Guard(
+            max_usd=0.001,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:search": 0.001},
+        )
+        with self.assertRaises(BudgetExceeded) as ctx, guard.tool("search"):
+            guard.record("gpt-4o", input_tokens=1_000)
+        self.assertNotIsInstance(ctx.exception, BudgetScopeExceeded)
+
+    def test_scope_spend_is_available_without_a_cap(self) -> None:
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+        with guard.step(tag="search"):
+            guard.record("gpt-4o", input_tokens=1_000_000)
+        self.assertAlmostEqual(guard.scope_spend("tag", "search"), 2.5)
+        self.assertAlmostEqual(guard.scope_spend("tool", "nothing"), 0.0)
+
+    def test_report_renders_each_scope_as_its_own_limit_row(self) -> None:
+        guard = Guard(
+            max_usd=5.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:search": 1.0, "tag:index": 0.5},
+        )
+        with guard.step(tag="index"), guard.tool("search"):
+            guard.record("gpt-4o", input_tokens=100_000)
+        rendered = guard.report().render(ascii_only=True)
+        self.assertIn("tool:search", rendered)
+        self.assertIn("tag:index", rendered)
+
+    def test_scoped_limits_survive_the_report_round_trip(self) -> None:
+        guard = Guard(
+            max_usd=5.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:search": 1.0},
+        )
+        with guard.tool("search"):
+            guard.record("gpt-4o", input_tokens=100_000)
+        rebuilt = Report.from_dict(guard.report().as_dict())
+        row = next(item for item in rebuilt.limits if item.name == "tool:search")
+        self.assertEqual(row.scope, "tool")
+        self.assertEqual(row.scope_name, "search")
+        self.assertAlmostEqual(row.used, 0.25)
+
+    def test_a_scoped_cap_counts_spend_restored_from_a_checkpoint(self) -> None:
+        original = Guard(max_usd=100.0, use_config=False, on_unknown_model="ignore")
+        with original.tool("search"):
+            original.record("gpt-4o", input_tokens=400_000)  # $1.00
+        resumed = Guard.from_snapshot(
+            original.snapshot(),
+            max_usd=100.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:search": 1.0},
+        )
+        self.assertAlmostEqual(resumed.scope_spend("tool", "search"), 1.0)
+        with self.assertRaises(BudgetScopeExceeded), resumed.tool("search"):
+            resumed.record("gpt-4o", input_tokens=1_000)
+
+    def test_invalid_scope_keys_fail_at_construction(self) -> None:
+        for bad in (
+            {"search": 1.0},
+            {"tool:": 1.0},
+            {"model:gpt-4o": 1.0},
+            {"tool:search": 0},
+            {"tool:search": -1},
+            {"tool:search": float("nan")},
+            {"tool:search": float("inf")},
+            {"tool:search": True},
+            {"tool:search": "1.0"},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(GuardConfigError):
+                Guard(use_config=False, scoped_budgets=bad)
+
+    def test_a_non_mapping_is_refused(self) -> None:
+        with self.assertRaises(GuardConfigError):
+            Guard(use_config=False, scoped_budgets=[("tool:search", 1.0)])  # type: ignore[arg-type]
+
+    def test_an_unpriced_call_adds_nothing_to_a_scope(self) -> None:
+        # Unpriced is not the same as free: counting it as $0.00 would put a bucket
+        # in the totals that reads as "this scope has spent nothing".
+        guard = Guard(
+            max_usd=100.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:search": 0.001},
+        )
+        with guard.tool("search"):
+            guard.record("mystery-model", input_tokens=10_000_000)
+        self.assertAlmostEqual(guard.scope_spend("tool", "search"), 0.0)
+        self.assertFalse(guard.stopped)
+
+    def test_scope_budgets_are_checked_in_a_stable_order(self) -> None:
+        # Two scopes tripping on one call must always report the same one, or the
+        # verdict changes between runs.
+        reported = set()
+        for _ in range(5):
+            guard = Guard(
+                max_usd=100.0,
+                use_config=False,
+                on_unknown_model="ignore",
+                scoped_budgets={"tool:aaa": 0.001, "tool:zzz": 0.001},
+            )
+            with self.assertRaises(BudgetScopeExceeded) as ctx:
+                with guard.tool("aaa"):
+                    guard.record("gpt-4o", input_tokens=1_000)
+                with guard.tool("zzz"):
+                    guard.record("gpt-4o", input_tokens=1_000)
+            reported.add(ctx.exception.name)
+        self.assertEqual(len(reported), 1)
+
+
+class WorkerContextTests(unittest.TestCase):
+    """No thread inherits a contextvars context, so attribution needs carrying."""
+
+    def test_a_worker_call_is_accounted_even_with_no_context(self) -> None:
+        # The money is never lost — only the attribution is, which is exactly why
+        # this is a documentation problem as much as a code one.
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+        with guard.step(tag="outer"), ThreadPoolExecutor(1) as pool:
+            record = pool.submit(guard.record, "gpt-4o", input_tokens=1_000).result()
+        self.assertEqual(guard.calls, 1)
+        self.assertIsNone(record.step)
+        self.assertIsNone(record.tag)
+
+    def test_neither_thread_kind_inherits_the_context(self) -> None:
+        # Pinned because it is easy to assume otherwise, and because the fix
+        # (bind/context) is only necessary if this is true.
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+        from_pool: list[object] = []
+
+        def worker() -> None:
+            from_pool.append(guard.record("gpt-4o", input_tokens=10))
+
+        with guard.step(tag="threaded"):
+            thread = threading.Thread(target=worker)
+            thread.start()
+            thread.join()
+            with ThreadPoolExecutor(1) as pool:
+                pooled = pool.submit(guard.record, "gpt-4o", input_tokens=10).result()
+        self.assertIsNone(from_pool[0].tag)  # type: ignore[attr-defined]
+        self.assertIsNone(pooled.tag)
+
+    def test_bind_carries_the_step_tag_and_tool(self) -> None:
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+        with guard.step(tag="fan-out") as step, guard.tool("fetch"):
+            bound = guard.bind(guard.record)
+            with ThreadPoolExecutor(2) as pool:
+                records = list(pool.map(lambda _: bound("gpt-4o", input_tokens=100), range(2)))
+        for record in records:
+            self.assertEqual(record.step, step.index)
+            self.assertEqual(record.tag, "fan-out")
+            self.assertEqual(record.tool, "fetch")
+
+    def test_context_carries_the_attribution_through_a_worker(self) -> None:
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+
+        def worker(ctx):
+            with ctx:
+                return guard.record("gpt-4o", input_tokens=100)
+
+        with guard.step(tag="ctx-tag") as step, guard.tool("ctx-tool"):
+            ctx = guard.context()
+            with ThreadPoolExecutor(1) as pool:
+                record = pool.submit(worker, ctx).result()
+        self.assertEqual(record.step, step.index)
+        self.assertEqual(record.tag, "ctx-tag")
+        self.assertEqual(record.tool, "ctx-tool")
+
+    def test_attribution_reaches_by_tag_and_by_tool(self) -> None:
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+
+        def worker(ctx):
+            with ctx:
+                return guard.record("gpt-4o", input_tokens=1_000_000)
+
+        with guard.step(tag="fan"), guard.tool("fetch"):
+            ctx = guard.context()
+            with ThreadPoolExecutor(1) as pool:
+                pool.submit(worker, ctx).result()
+        self.assertIn("fetch", guard.tracker.by_tool())
+        self.assertIn("fan", guard.tracker.by_tag())
+
+    def test_a_scoped_budget_fires_inside_a_worker(self) -> None:
+        # The concrete consequence of the empty context: without it a tool cap
+        # silently never fires, which is a limit that reports it is working while
+        # doing nothing.
+        guard = Guard(
+            max_usd=100.0,
+            use_config=False,
+            on_unknown_model="ignore",
+            scoped_budgets={"tool:fetch": 0.005},
+        )
+
+        def worker(ctx):
+            with ctx:
+                return guard.record("gpt-4o", input_tokens=2_000)
+
+        with guard.step(tag="fan"), guard.tool("fetch"):
+            ctx = guard.context()
+            with self.assertRaises(BudgetScopeExceeded), ThreadPoolExecutor(4) as pool:
+                list(pool.map(worker, [ctx] * 4))
+
+    def test_context_outside_any_block_is_a_no_op(self) -> None:
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+        with guard.context():
+            record = guard.record("gpt-4o", input_tokens=10)
+        self.assertIsNone(record.step)
+        self.assertIsNone(record.tag)
+        self.assertEqual(guard.calls, 1)
+
+    def test_an_inner_step_restores_the_outer_one_on_exit(self) -> None:
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+        with guard.step(tag="outer") as outer:
+            with guard.step(tag="inner"):
+                pass
+            record = guard.record("gpt-4o", input_tokens=10)
+        self.assertEqual(record.tag, "outer")
+        self.assertEqual(record.step, outer.index)
+
+    def test_bind_preserves_the_wrapped_functions_metadata(self) -> None:
+        guard = Guard(max_usd=10.0, use_config=False, on_unknown_model="ignore")
+
+        def documented() -> None:
+            """A docstring."""
+
+        self.assertEqual(guard.bind(documented).__name__, "documented")
+        self.assertEqual(guard.bind(documented).__doc__, "A docstring.")
+
+
+class PreflightStrictTests(unittest.TestCase):
+    """The unpriced hole in a gate that callers treat as a hard stop."""
+
+    def test_an_unpriced_model_is_allowed_through_by_default(self) -> None:
+        guard = Guard(max_usd=0.01, use_config=False, on_unknown_model="warn")
+        self.assertEqual(guard.preflight("mystery", input_tokens=10_000_000), 0.0)
+        self.assertFalse(guard.stopped)
+
+    def test_strict_refuses_an_unpriced_model(self) -> None:
+        guard = Guard(
+            max_usd=0.01, use_config=False, on_unknown_model="warn", preflight_strict=True
+        )
+        with self.assertRaises(BudgetExceeded) as ctx:
+            guard.preflight("mystery", input_tokens=10_000_000)
+        self.assertTrue(ctx.exception.unpriced_model)
+        self.assertEqual(ctx.exception.model, "mystery")
+
+    def test_strict_defaults_to_on_for_on_unknown_model_error(self) -> None:
+        # Someone who has already said "an unpriced model is an error" does not want
+        # the pre-flight gate waving one through.
+        guard = Guard(max_usd=0.01, use_config=False, on_unknown_model="error")
+        with self.assertRaises(BudgetExceeded):
+            guard.preflight("mystery", input_tokens=1)
+
+    def test_strict_can_be_switched_off_explicitly(self) -> None:
+        guard = Guard(
+            max_usd=0.01, use_config=False, on_unknown_model="error", preflight_strict=False
+        )
+        self.assertEqual(guard.preflight("mystery", input_tokens=1), 0.0)
+
+    def test_the_per_call_override_wins(self) -> None:
+        guard = Guard(max_usd=1.0, use_config=False, on_unknown_model="warn")
+        with self.assertRaises(BudgetExceeded):
+            guard.preflight("mystery", input_tokens=1, strict=True)
+        other = Guard(max_usd=1.0, use_config=False, on_unknown_model="warn", preflight_strict=True)
+        self.assertEqual(other.preflight("mystery", input_tokens=1, strict=False), 0.0)
+
+    def test_a_priced_model_is_checked_the_same_either_way(self) -> None:
+        for strict in (True, False):
+            with self.subTest(strict=strict):
+                guard = Guard(
+                    max_usd=0.01,
+                    use_config=False,
+                    preflight_strict=strict,
+                    on_unknown_model="ignore",
+                )
+                with self.assertRaises(BudgetExceeded) as ctx:
+                    guard.preflight("gpt-4o", input_tokens=1_000_000, max_output_tokens=1_000_000)
+                self.assertFalse(ctx.exception.unpriced_model)
+
+    def test_a_default_price_makes_strict_moot(self) -> None:
+        guard = Guard(
+            max_usd=100.0,
+            use_config=False,
+            on_unknown_model="warn",
+            preflight_strict=True,
+            default_price=Price(1.0, 1.0),
+        )
+        # 1M input at $1/1M, plus the default 1,024-token output bound.
+        self.assertAlmostEqual(guard.preflight("mystery", input_tokens=1_000_000), 1.001024)
+        self.assertAlmostEqual(
+            guard.preflight("mystery", input_tokens=1_000_000, max_output_tokens=0), 1.0
+        )
+        self.assertFalse(guard.stopped)
 
 
 class AttributionTests(unittest.TestCase):

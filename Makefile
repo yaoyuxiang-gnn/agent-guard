@@ -35,6 +35,8 @@ examples:  ## Run every example end to end
 	PYTHONPATH=src python examples/langgraph_demo.py
 	PYTHONPATH=src python examples/custom_models.py
 	PYTHONPATH=src python examples/checkpointing.py
+	PYTHONPATH=src python examples/scoped_budgets.py
+	PYTHONPATH=src python examples/price_snapshot.py
 
 build:  ## Build sdist and wheel into dist/
 	python -m build

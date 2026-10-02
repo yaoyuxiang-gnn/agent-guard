@@ -53,6 +53,15 @@ from .config import (
 from .exceptions import GuardConfigError
 from .pricing import PRICING_AS_OF, Price, PriceTable, normalize_model_key
 from .report import Report
+from .snapshot import (
+    DEFAULT_SNAPSHOT_URL,
+    fetch_snapshot,
+    load_snapshot,
+    parse_snapshot_payload,
+    remove_snapshot,
+    snapshot_path,
+    write_snapshot_file,
+)
 
 __all__ = ["main"]
 
@@ -107,7 +116,36 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="ignore the config file and show only bundled prices",
     )
+    pricing.add_argument(
+        "--no-snapshot",
+        action="store_true",
+        help="ignore a downloaded price snapshot as well",
+    )
     pricing.add_argument("--json", action="store_true", help="print the table as JSON")
+    pricing.add_argument(
+        "--update",
+        action="store_true",
+        help=f"download a fresh catalogue and cache it (default source: {DEFAULT_SNAPSHOT_URL})",
+    )
+    pricing.add_argument(
+        "--url",
+        help="the catalogue URL to download with --update",
+    )
+    pricing.add_argument(
+        "--from-file",
+        metavar="PATH",
+        help="import a catalogue from a local file instead of downloading",
+    )
+    pricing.add_argument(
+        "--status",
+        action="store_true",
+        help="report the price snapshot in effect, without printing the table",
+    )
+    pricing.add_argument(
+        "--remove",
+        action="store_true",
+        help="delete the cached snapshot and go back to bundled prices",
+    )
     pricing.set_defaults(func=_cmd_pricing)
 
     config = sub.add_parser(
@@ -282,7 +320,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 
 
-def _effective_config(*, use_config: bool) -> PricingConfig:
+def _effective_config(*, use_config: bool, use_snapshot: bool = True) -> PricingConfig:
     """Load config for a read-only command.
 
     The library warns when it skips an untrusted project file; a CLI command
@@ -293,7 +331,7 @@ def _effective_config(*, use_config: bool) -> PricingConfig:
         return PricingConfig()
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=_IGNORED_CONFIG_WARNING, category=RuntimeWarning)
-        return load_config()
+        return load_config(use_snapshot=use_snapshot)
 
 
 def _print_ignored_config_note() -> None:
@@ -309,7 +347,14 @@ def _rows(table: PriceTable) -> list[tuple[str, Price, str]]:
 
 
 def _cmd_pricing(args: argparse.Namespace) -> int:
-    config = _effective_config(use_config=not args.no_config)
+    if args.update or args.from_file:
+        return _cmd_pricing_update(args)
+    if args.remove:
+        return _cmd_pricing_remove()
+    if args.status:
+        return _cmd_pricing_status()
+
+    config = _effective_config(use_config=not args.no_config, use_snapshot=not args.no_snapshot)
     table = PriceTable.from_config(config)
 
     if args.json:
@@ -337,6 +382,82 @@ def _cmd_pricing(args: argparse.Namespace) -> int:
         )
     _print_config_extras(config)
     _print_ignored_config_note()
+    return 0
+
+
+def _cmd_pricing_update(args: argparse.Namespace) -> int:
+    """Download (or import) a price catalogue and cache it as a snapshot.
+
+    The only command in agentguard that touches the network, and it only does so
+    when asked. ``--from-file`` reads a catalogue from disk instead, which is what
+    an air-gapped machine, a proxy, or a reviewer who wants to read the numbers
+    before trusting them should use.
+    """
+    if args.update and args.from_file:
+        print("  --update downloads; --from-file reads a local catalogue. Pick one.")
+        return 2
+
+    target = snapshot_path()
+    if args.from_file:
+        source = Path(args.from_file)
+        if not source.is_file():
+            print(f"  no such catalogue: {source}")
+            return 1
+        try:
+            payload = json.loads(source.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"  cannot read {source}: {exc}")
+            return 1
+        snapshot = parse_snapshot_payload(payload, url=f"file:{source}")
+        print(f"Reading a price catalogue from {source}")
+    else:
+        url = args.url or DEFAULT_SNAPSHOT_URL
+        print(f"Fetching a price catalogue from {url}")
+        snapshot = fetch_snapshot(url)
+
+    written = write_snapshot_file(target, snapshot)
+    print(
+        f"  {snapshot.models_count} models became a snapshot "
+        f"({snapshot.skipped} entr{'y' if snapshot.skipped == 1 else 'ies'} skipped)"
+    )
+    print(f"  written to {written}")
+    print(f"  checksum {snapshot.checksum}")
+    print()
+    print("  It merges underneath your config, so any price you set yourself still")
+    print("  wins. `agentguard pricing` shows the result; `agentguard pricing")
+    print("  --no-snapshot` shows the bundled table alone.")
+    return 0
+
+
+def _cmd_pricing_remove() -> int:
+    removed = remove_snapshot()
+    if removed is None:
+        print("  no price snapshot to remove; the bundled table is already in use")
+        return 0
+    print(f"  removed {removed}")
+    print("  bundled prices are in effect again")
+    return 0
+
+
+def _cmd_pricing_status() -> int:
+    """Report the snapshot layer specifically: is one there, and from where."""
+    target = snapshot_path()
+    print(f"  snapshot path  {target}")
+    try:
+        snapshot = load_snapshot()
+    except GuardConfigError as exc:
+        print(f"  state          UNUSABLE\n\n  {exc}")
+        return 1
+    if snapshot is None:
+        print("  state          none — the bundled table is in use")
+        print()
+        print(f"  Create one with `agentguard pricing --update` (source: {DEFAULT_SNAPSHOT_URL}).")
+        return 0
+    print(f"  state          {snapshot.describe()}")
+    print(f"  source         {snapshot.url}")
+    print(f"  checksum       {snapshot.checksum}")
+    if snapshot.skipped:
+        print(f"  skipped        {snapshot.skipped} entries with no usable flat rate")
     return 0
 
 

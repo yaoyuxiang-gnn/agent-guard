@@ -49,8 +49,35 @@ class CallSignatureTests(unittest.TestCase):
     def test_long_signatures_are_truncated(self) -> None:
         signature = call_signature("big", {"blob": "x" * 5000}, max_len=100)
         self.assertTrue(signature.startswith("big("))
-        self.assertIn("more chars>", signature)
-        self.assertLess(len(signature), 200)
+        self.assertIn("more chars", signature)
+        self.assertIn("digest ", signature)
+        self.assertLessEqual(len(signature), 100 + 60)
+
+    def test_truncation_cannot_make_two_different_calls_identical(self) -> None:
+        # Regression: truncation used to keep only a prefix, so payloads sharing a
+        # long head collapsed onto one fingerprint and a healthy agent was reported
+        # as repeating itself. This is the false positive the truncation created.
+        signatures = {
+            call_signature("index_document", {"docs": [{"body": "A" * 500, "id": i}]})
+            for i in range(4)
+        }
+        self.assertEqual(len(signatures), 4)
+
+    def test_truncation_keeps_the_tail_where_the_discriminating_argument_is(self) -> None:
+        # "id" sorts after "body", so a head-only truncation drops exactly the
+        # argument that tells two otherwise identical calls apart.
+        signature = call_signature("index", {"body": "A" * 5000, "id": 7})
+        self.assertIn('"id":7', signature)
+
+    def test_truncation_is_deterministic(self) -> None:
+        args = {"blob": "x" * 5000}
+        self.assertEqual(call_signature("big", args), call_signature("big", args))
+
+    def test_a_bounded_signature_still_fits_its_budget(self) -> None:
+        for max_len in (40, 100, 256, 512):
+            signature = call_signature("big", {"blob": "x" * 5000}, max_len=max_len)
+            # The marker is fixed overhead; the content is what max_len budgets.
+            self.assertLessEqual(len(signature), max_len + 60, f"max_len={max_len}")
 
     def test_unserialisable_args_still_produce_a_signature(self) -> None:
         signature = call_signature("weird", {"obj": object()})
@@ -150,6 +177,54 @@ class SimilarityDetectorTests(unittest.TestCase):
                 ],
             )
         )
+
+    def test_indexing_successive_documents_is_not_a_loop(self) -> None:
+        # Regression: with a head-only truncation these four calls collapsed onto
+        # one fingerprint, and an agent indexing documents that share a boilerplate
+        # body was killed on the fourth one. Healthy work must never trip a
+        # detector that ships on by default.
+        for body in ("A" * 200, "A" * 500, ("lorem ipsum dolor sit amet " * 40)):
+            with self.subTest(body_len=len(body)):
+                signatures = [
+                    call_signature("index_document", {"docs": [{"body": body, "id": i}]})
+                    for i in range(4)
+                ]
+                detector = SimilarityDetector(threshold=0.95, window=8, max_similar=3)
+                self.assertIsNone(feed(detector, signatures))
+
+    def test_a_repetitive_payload_does_not_change_the_verdict(self) -> None:
+        # Regression: difflib's autojunk heuristic declared characters making up
+        # more than 1% of a long string "junk", so a payload of repeated
+        # characters scored 0.76 against a near-identical string where an honest
+        # comparison scores 0.96. The threshold meant different things depending on
+        # how repetitive the payload was. Same difference, same answer, either way.
+        def verdict_for(filler: str) -> str | None:
+            detector = SimilarityDetector(threshold=0.95, window=8, max_similar=2)
+            found = feed(
+                detector,
+                [
+                    call_signature("t", {"blob": filler}),
+                    call_signature("t", {"blob": filler + "changed"}),
+                ],
+            )
+            return found.kind if found else None
+
+        self.assertEqual(verdict_for("x" * 400), verdict_for("qwertyuiop" * 40))
+
+    def test_whitespace_only_differences_remain_similar_at_any_length(self) -> None:
+        # Structural whitespace is already canonicalised out of a signature, so a
+        # paraphrase normally shows up as a trailing space on a short payload. The
+        # guarantee the comparison key has to hold is that whitespace *is* ignored
+        # whatever the length — including when the differing space falls outside the
+        # window the ratio is computed over.
+        detector = SimilarityDetector(threshold=0.95, window=8, max_similar=2)
+        body = "search(" + "q=" + "z" * 400 + ")"
+        self.assertEqual(detector._key(body), detector._key(body[:-1] + " " + body[-1]))
+        self.assertNotEqual(detector._key(body), detector._key("search(q=" + "z" * 400 + "x)"))
+
+    def test_invalid_compare_chars(self) -> None:
+        with self.assertRaises(GuardConfigError):
+            SimilarityDetector(compare_chars=0)
 
     def test_invalid_configuration(self) -> None:
         with self.assertRaises(GuardConfigError):

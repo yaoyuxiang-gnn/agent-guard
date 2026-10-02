@@ -29,6 +29,7 @@ __all__ = [
     "GuardTripped",
     "GuardStopped",
     "BudgetExceeded",
+    "BudgetScopeExceeded",
     "TokenLimitExceeded",
     "StepLimitExceeded",
     "TimeLimitExceeded",
@@ -120,11 +121,15 @@ class GuardStopped(GuardTripped):
 class BudgetExceeded(GuardTripped):
     """The run would exceed its dollar budget.
 
-    Raised in two situations, distinguished by :attr:`projected_usd`:
+    Raised in three situations, distinguished by :attr:`projected_usd` and
+    :attr:`unpriced_model`:
 
     * **After the fact** — a recorded call pushed the total over the limit.
     * **Pre-flight** — :meth:`Guard.preflight` refused a call *before* it was
       made, because its worst-case cost would not fit in the remaining budget.
+    * **Pre-flight, unpriced** — the same, because the model has no known price at
+      all and so cannot be shown to fit. Only under ``strict=True``; see
+      :meth:`Guard.preflight`.
     """
 
     reason = "budget"
@@ -137,15 +142,23 @@ class BudgetExceeded(GuardTripped):
         projected_usd: float | None = None,
         model: str | None = None,
         call_cost_usd: float | None = None,
+        unpriced_model: bool = False,
     ) -> None:
         self.spent_usd = spent_usd
         self.limit_usd = limit_usd
         self.projected_usd = projected_usd
         self.model = model
         self.call_cost_usd = call_cost_usd
+        self.unpriced_model = unpriced_model
 
         target = f"a {model} call" if model else "the next call"
-        if projected_usd is not None:
+        if unpriced_model:
+            detail = (
+                f"refused before spending: {target} has no known price, so it cannot "
+                f"be shown to fit the {format_usd(limit_usd)} limit (already spent "
+                f"{format_usd(spent_usd)})"
+            )
+        elif projected_usd is not None:
             detail = (
                 f"refused before spending: {target} could reach "
                 f"{format_usd(projected_usd)}, over the {format_usd(limit_usd)} limit "
@@ -160,6 +173,43 @@ class BudgetExceeded(GuardTripped):
             projected_usd=projected_usd,
             model=model,
             call_cost_usd=call_cost_usd,
+            unpriced_model=unpriced_model,
+        )
+
+
+class BudgetScopeExceeded(GuardTripped):
+    """One tool or one tag exceeded the budget set aside for it.
+
+    A whole-run cap answers "is this run too expensive?". It cannot answer "which
+    part of it is too expensive?", so a single runaway tool can spend the entire
+    allowance before the run-level limit notices. This is that limit, per scope::
+
+        Guard(max_usd=5.0, scoped_budgets={"tool:search": 1.0})
+
+    :attr:`scope` is ``"tool"`` or ``"tag"`` and :attr:`name` is the tool or tag
+    that blew it, so the message names the culprit rather than the run.
+    """
+
+    reason = "scope-budget"
+
+    def __init__(
+        self,
+        scope: str,
+        name: str,
+        spent_usd: float,
+        limit_usd: float,
+    ) -> None:
+        self.scope = scope
+        self.name = name
+        self.spent_usd = spent_usd
+        self.limit_usd = limit_usd
+        super().__init__(
+            f"Budget exceeded for {scope} {name!r}: spent {format_usd(spent_usd)} "
+            f"of its {format_usd(limit_usd)} allowance.",
+            scope=scope,
+            name=name,
+            spent_usd=spent_usd,
+            limit_usd=limit_usd,
         )
 
 

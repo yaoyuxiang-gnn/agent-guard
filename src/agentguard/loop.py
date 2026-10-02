@@ -45,7 +45,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ._util import stable_json
+from ._util import short_hash, stable_json
 from .exceptions import GuardConfigError
 
 __all__ = [
@@ -62,8 +62,33 @@ __all__ = [
 ]
 
 # Signatures can embed whole tool payloads; comparisons and logs only ever need
-# a prefix, so keep the fingerprint bounded to avoid quadratic similarity work.
-_MAX_SIGNATURE_LEN = 512
+# a fraction of one, so keep the fingerprint bounded to avoid quadratic
+# similarity work. The bound is deliberately well below the point where
+# ``difflib.SequenceMatcher.ratio()`` starts to dilute: on a 2,000-character
+# string a genuine difference of twenty characters still scores above 0.99, so a
+# "95% similar" threshold applied to unbounded text stops meaning anything.
+_MAX_SIGNATURE_LEN = 256
+
+#: Length of the content digest folded into a truncated signature.
+_SIGNATURE_DIGEST_LEN = 12
+
+#: How much of a payload a truncated signature keeps before the digest.
+_SIGNATURE_HEAD_LEN = 64
+
+#: How much of the *end* of a payload a truncated signature keeps after it.
+#: Arguments a tool is keyed on — an ``id``, a ``path``, a ``cursor`` — sort late
+#: in the canonical JSON, and the keys a call site controls are ordered first, so
+#: a head-only truncation drops precisely the part that distinguishes two calls.
+_SIGNATURE_TAIL_LEN = 64
+
+#: How much of each signature :class:`SimilarityDetector` compares.
+#:
+#: Short enough to discriminate, long enough to see the digest that
+#: :func:`call_signature` folds into a truncated fingerprint. A percentage
+#: threshold loses its meaning as the text it is applied to grows — on a
+#: two-thousand-character string a genuine difference of twenty characters still
+#: scores 0.99 — so the comparison is bounded rather than the ratio.
+_DEFAULT_COMPARE_CHARS = 128
 
 
 def call_signature(name: str, args: Any = None, *, max_len: int = _MAX_SIGNATURE_LEN) -> str:
@@ -73,15 +98,37 @@ def call_signature(name: str, args: Any = None, *, max_len: int = _MAX_SIGNATURE
     in dictionary insertion order produce the *same* signature — which is exactly
     the false negative that makes naive loop detectors useless.
 
+    A signature longer than ``max_len`` is truncated to bound comparison cost, and
+    the truncation is **collision-free**: it keeps a head, keeps a tail, and folds
+    the digest of the whole payload in between — digest first, so that it lands
+    inside the window :class:`SimilarityDetector` compares. Cutting the tail off
+    and stopping there is a false-positive machine: an agent indexing documents
+    that share a boilerplate body would collapse every call onto one fingerprint
+    and be reported as a repeat, stopping the healthy work this library exists to
+    protect. The digest is what makes "different call, different fingerprint" true
+    for payloads of any length, however similar they look.
+
     >>> call_signature("search", {"q": "a", "n": 1}) == call_signature("search", {"n": 1, "q": "a"})
     True
     >>> call_signature("search", None)
     'search()'
+    >>> len(call_signature("big", {"blob": "x" * 5000})) <= 256
+    True
+    >>> # Two long payloads that differ only at the end stay distinguishable.
+    >>> call_signature("b", {"x": "y" * 5000}) != call_signature("b", {"x": "y" * 4999 + "z"})
+    True
     """
     rendered = "" if args is None else stable_json(args)
     signature = f"{name}({rendered})"
     if max_len and len(signature) > max_len:
-        signature = signature[:max_len] + f"...<{len(signature) - max_len} more chars>"
+        digest = short_hash(signature, length=_SIGNATURE_DIGEST_LEN)
+        # Room for the fixed overhead, then whatever is left is split head/tail.
+        head = min(_SIGNATURE_HEAD_LEN, max(1, max_len // 3))
+        tail = min(_SIGNATURE_TAIL_LEN, max(1, max_len // 3))
+        marker = f"...<{len(signature) - max_len} more chars, digest {digest}>..."
+        budget = max(1, max_len - len(marker))
+        head, tail = min(head, budget), min(tail, max(0, budget - head))
+        signature = f"{signature[:head]}{marker}{signature[len(signature) - tail :]}"
     return signature
 
 
@@ -90,6 +137,17 @@ def _preview(signature: str, limit: int = 72) -> str:
     if len(signature) <= limit:
         return signature
     return signature[:limit] + "..."
+
+
+def _squeeze(signature: str) -> str:
+    """Drop whitespace, so two spellings of one call compare equal.
+
+    ``"search(\\"python asyncio\\")"`` and ``"search(\\"python asyncio \\")"`` are the
+    same query typed twice; treating them as equal is the whole point of the
+    similarity detector. Kept whitespace-only so it cannot hide a real difference:
+    any change to a payload character still shows up.
+    """
+    return "".join(signature.split())
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +395,12 @@ class SimilarityDetector(Detector):
     agent paraphrases aggressively; raise it if legitimate queries in your domain
     share long prefixes (searching for successive library versions, for example).
 
+    ``compare_chars`` is how much of each signature is compared. Raising it does
+    not make the detector more sensitive, it makes it *less*: on a
+    two-thousand-character string a real difference of twenty characters still
+    scores 0.99, so a percentage threshold stops discriminating the longer the
+    text it is applied to gets.
+
     >>> detector = SimilarityDetector(threshold=0.9, window=8, max_similar=1)
     >>> detector.observe("search(q=python)", 1) is None
     True
@@ -352,7 +416,7 @@ class SimilarityDetector(Detector):
         threshold: float = 0.95,
         window: int = 8,
         max_similar: int = 3,
-        compare_chars: int = _MAX_SIGNATURE_LEN,
+        compare_chars: int = _DEFAULT_COMPARE_CHARS,
     ) -> None:
         if not 0.0 < threshold <= 1.0:
             raise GuardConfigError(f"threshold must be in (0, 1], got {threshold}")
@@ -360,22 +424,48 @@ class SimilarityDetector(Detector):
             raise GuardConfigError(f"window must be >= 1, got {window}")
         if max_similar < 1:
             raise GuardConfigError(f"max_similar must be >= 1, got {max_similar}")
+        if compare_chars < 1:
+            raise GuardConfigError(f"compare_chars must be >= 1, got {compare_chars}")
         self.threshold = threshold
         self.window = window
         self.max_similar = max_similar
         self.compare_chars = compare_chars
         self._recent: deque[str] = deque(maxlen=window)
 
+    def _key(self, signature: str) -> str:
+        """The bounded, digest-bearing form this detector actually compares.
+
+        Two problems make comparing raw signatures unreliable, and both come down
+        to the same thing: a percentage threshold over text whose length the caller
+        controls stops measuring what it claims to.
+
+        *Length dilution.* On a two-thousand-character call, changing one argument
+        character leaves 99.9% of the text identical, so *every* pair of similar
+        calls scores above a 95% bar. An agent indexing successive documents — same
+        boilerplate body, a different ``id`` — is doing healthy work, and it was
+        being reported as a loop on the fourth document.
+
+        *Length dependence.* The same two calls can score above or below the bar
+        depending only on how much payload surrounds the difference.
+
+        Folding the digest of the whole signature in fixes both: any change to the
+        payload at all moves the key, whether the signature was 30 characters or
+        thirty thousand, so the ratio measures similarity of *calls* rather than
+        similarity of whatever text happened to survive truncation. Whitespace-only
+        differences still score 1.0, which keeps the paraphrase case — the one this
+        detector exists for — working exactly as documented.
+        """
+        squeezed = _squeeze(signature)
+        digest = short_hash(squeezed, length=_SIGNATURE_DIGEST_LEN)
+        return f"{squeezed[: self.compare_chars]}|{digest}"
+
     def _ratio(self, a: str, b: str) -> float:
-        if a == b:
-            return 1.0
-        return difflib.SequenceMatcher(
-            None, a[: self.compare_chars], b[: self.compare_chars]
-        ).ratio()
+        return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
 
     def observe(self, signature: str, step: int) -> LoopVerdict | None:
-        similar = [s for s in self._recent if self._ratio(s, signature) >= self.threshold]
-        self._recent.append(signature)
+        key = self._key(signature)
+        similar = [k for k in self._recent if self._ratio(k, key) >= self.threshold]
+        self._recent.append(key)
         if len(similar) >= self.max_similar:
             return LoopVerdict(
                 kind=self.name,

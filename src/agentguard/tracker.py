@@ -44,20 +44,40 @@ SNAPSHOT_VERSION = 1
 # Usage extraction
 # --------------------------------------------------------------------------- #
 
-_INPUT_KEYS = ("prompt_tokens", "input_tokens", "prompt_token_count", "input_token_count")
+_INPUT_KEYS = (
+    "prompt_tokens",
+    "input_tokens",
+    "prompt_token_count",
+    "input_token_count",
+    # AWS Bedrock's Converse API, which uses camelCase where every other provider
+    # uses snake_case. Its usage object is the only place token counts appear for a
+    # Bedrock agent, so without these a Bedrock run is billed as unpriced.
+    "inputTokens",
+    "promptTokens",
+)
 _OUTPUT_KEYS = (
     "completion_tokens",
     "output_tokens",
     "candidates_token_count",
     "output_token_count",
+    "outputTokens",
+    "completionTokens",
 )
 _CACHED_KEYS = (
     "cached_tokens",
     "cache_read_input_tokens",
     "cached_input_tokens",
     "cache_read_tokens",
+    "cacheReadInputTokens",
+    "cachedTokens",
 )
-_REASONING_KEYS = ("reasoning_tokens", "reasoning_token_count", "thoughts_token_count")
+_REASONING_KEYS = (
+    "reasoning_tokens",
+    "reasoning_token_count",
+    "thoughts_token_count",
+    "reasoningTokens",
+)
+
 
 # Nested detail objects, tried when the flat key is absent.
 _NESTED_CACHED = (
@@ -308,6 +328,7 @@ class CostTracker:
         "_models_warned",
         "_on_unknown_model",
         "_records",
+        "_scope_totals",
         "_table",
         "_unpriced_calls",
     )
@@ -330,6 +351,10 @@ class CostTracker:
         self._on_unknown_model = on_unknown_model
         self._models_warned: set[str] = set()
         self._unpriced_calls = 0
+        # Running per-tool and per-tag totals. Maintained as records arrive so a
+        # scoped budget is O(1) to check rather than a scan of every call so far,
+        # which would make an evaluated-per-call limit quadratic in the run length.
+        self._scope_totals: dict[tuple[str, str], float] = {}
 
     # -- mutation ------------------------------------------------------------
 
@@ -345,19 +370,65 @@ class CostTracker:
         meta: Mapping[str, Any] | None = None,
         price: Price | None = None,
     ) -> CallRecord:
-        """Account for one call and return its immutable record."""
+        """Account for one call and return its immutable record.
+
+        Equivalent to :meth:`record_with_policy` for every ``on_unknown_model``
+        mode except ``"error"``, which raises :class:`~agentguard.GuardConfigError`
+        **after** the call has been recorded — so the spend is still in
+        :attr:`total_usd` and in :attr:`records` when the caller catches it.
+        """
+        record, failure = self.record_with_policy(
+            model=model,
+            usage=usage,
+            elapsed_s=elapsed_s,
+            tag=tag,
+            step=step,
+            tool=tool,
+            meta=meta,
+            price=price,
+        )
+        if failure is not None:
+            raise failure
+        return record
+
+    def record_with_policy(
+        self,
+        *,
+        model: str,
+        usage: Usage,
+        elapsed_s: float = 0.0,
+        tag: str | None = None,
+        step: int | None = None,
+        tool: str | None = None,
+        meta: Mapping[str, Any] | None = None,
+        price: Price | None = None,
+    ) -> tuple[CallRecord, GuardConfigError | None]:
+        """Account for one call, returning ``(record, failure)``.
+
+        The record is **always** produced and always counted; ``failure`` is the
+        error the caller should raise afterwards, and is ``None`` in every mode but
+        ``on_unknown_model="error"``.
+
+        Reporting the failure instead of raising it is what lets
+        :meth:`agentguard.Guard.record` re-evaluate the limits and raise in the
+        documented order. The call being recorded has already been made and already
+        been paid for, so an exception raised *instead* of the record would take
+        that spend out of the total, out of ``by_model``, and out of the report: a
+        guard that quietly forgets money it was told about.
+        """
         resolved = None if price is not None else self._table.resolve(model)
         effective = price or (resolved[1] if resolved else None) or self._default_price
 
         if effective is None:
             cost: float | None = None
-            self._handle_unknown_model(model)
+            failure = self._handle_unknown_model(model)
         else:
             cost = effective.cost_usd(
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
                 cached_input_tokens=usage.cached_input_tokens,
             )
+            failure = None
 
         with self._lock:
             record = CallRecord(
@@ -376,18 +447,55 @@ class CostTracker:
             self._records.append(record)
             if cost is None:
                 self._unpriced_calls += 1
-            return record
+            else:
+                self._add_scope_totals(record.tool, record.tag, cost)
+            return record, failure
 
-    def _handle_unknown_model(self, model: str) -> None:
-        if self._on_unknown_model == "error":
-            raise GuardConfigError(
-                f"no price known for model {model!r}. Add it via "
-                f"Guard(pricing={{{model!r}: (input_per_1m, output_per_1m)}}), pass "
-                f"a default_price=, or set on_unknown_model='warn'."
-            )
+    def _add_scope_totals(self, tool: str | None, tag: str | None, cost: float) -> None:
+        """Fold one priced call into the running per-tool / per-tag totals.
+
+        Only *priced* calls are added. An unpriced call has no cost to add, and
+        counting it as ``0.0`` would put a bucket in :meth:`scope_totals` that a
+        scoped budget reads as "this scope has spent nothing" rather than "this
+        scope cannot be measured" — the same distinction the report draws between
+        ``$0`` and *unpriced*.
+        """
+        for scope, name in (("tool", tool), ("tag", tag)):
+            if name:
+                key = (scope, name)
+                self._scope_totals[key] = self._scope_totals.get(key, 0.0) + cost
+
+    def scope_totals(self, scope: str) -> dict[str, float]:
+        """Dollars spent per tool or per tag, for ``scope`` of ``"tool"``/``"tag"``.
+
+        >>> tracker = CostTracker(on_unknown_model="ignore")
+        >>> _ = tracker.record(model="gpt-4o", usage=Usage(1_000_000, 0), tool="search")
+        >>> round(tracker.scope_totals("tool")["search"], 2)
+        2.5
+        """
+        with self._lock:
+            return {
+                name: total for (kind, name), total in self._scope_totals.items() if kind == scope
+            }
+
+    def _handle_unknown_model(self, model: str) -> GuardConfigError | None:
+        """Note that a model could not be priced; return the error to raise, if any.
+
+        Never raises: see :meth:`record_with_policy` for why the caller raises once
+        the record exists. In ``"warn"`` mode the warning is emitted here, once per
+        model.
+        """
         with self._lock:
             already_warned = model in self._models_warned
             self._models_warned.add(model)
+
+        if self._on_unknown_model == "error":
+            return GuardConfigError(
+                f"no price known for model {model!r}, so its cost cannot be counted "
+                f"against the budget and is recorded as unpriced. Add it via "
+                f"Guard(pricing={{{model!r}: (input_per_1m, output_per_1m)}}), pass "
+                f"a default_price=, or set on_unknown_model='warn'."
+            )
         if self._on_unknown_model == "warn" and not already_warned:
             if model == "unknown":
                 message = (
@@ -403,6 +511,7 @@ class CostTracker:
                     f"override, or a default_price=."
                 )
             warnings.warn(message, RuntimeWarning, stacklevel=3)
+        return None
 
     # -- read-only views -----------------------------------------------------
 
@@ -668,6 +777,17 @@ class CostTracker:
             self._records = records
             self._unpriced_calls = unpriced_calls
             self._models_warned = warned
+            # Rebuilt from the restored records, so a scoped budget keeps counting
+            # against what the run already spent before the checkpoint.
+            totals: dict[tuple[str, str], float] = {}
+            for record in records:
+                if record.cost_usd is None:
+                    continue
+                for scope, name in (("tool", record.tool), ("tag", record.tag)):
+                    if name:
+                        key = (scope, name)
+                        totals[key] = totals.get(key, 0.0) + record.cost_usd
+            self._scope_totals = totals
 
 
 def _read_int(source: Mapping[str, Any], key: str, context: str) -> int:

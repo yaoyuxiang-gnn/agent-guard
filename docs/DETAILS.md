@@ -12,8 +12,9 @@ not fit, or when you want to know why one was chosen.
 
 - [The four detectors](#the-four-detectors) — including writing your own
 - [What happens when it trips](#what-happens-when-it-trips) — `raise`, `warn`, `stop`
+- [Per-tool and per-tag budgets](#per-tool-and-per-tag-budgets)
 - [Pre-flight](#pre-flight-refuse-a-call-before-paying-for-it)
-- [Prices: the whole configuration](#prices-the-whole-configuration)
+- [Prices: the whole configuration](#prices-the-whole-configuration) — including refreshing the table
 - [Checkpointing](#checkpointing)
 - [The complete CLI](#the-complete-cli)
 - [Design principles](#design-principles)
@@ -140,6 +141,80 @@ report denies, which is the one thing a cost report must not do. A guard stopped
 `"stop"` therefore also refuses a wrapped client's next call, which means it costs
 nothing.
 
+## Per-tool and per-tag budgets
+
+`max_usd` caps the run. It cannot cap a *part* of the run, so a single tool that has
+gone into a retry storm can spend the entire allowance before the run-level ceiling
+notices — and by the time you read the report, the answer to "what ate the budget?"
+is historical.
+
+`scoped_budgets` puts a smaller ceiling on one tool or one tag:
+
+```python
+guard = Guard(max_usd=5.00, scoped_budgets={"tool:search": 1.00, "tag:index": 0.50})
+```
+
+A scope whose spend exceeds its cap trips `BudgetScopeExceeded`, which carries
+`scope`, `name`, `spent_usd` and `limit_usd` — so the message names the culprit
+rather than the run:
+
+```text
+Budget exceeded for tool 'fetch': spent $0.0125 of its $0.012 allowance.
+```
+
+Three decisions in that shape:
+
+**Scope keys are validated at construction.** `"tool:search"` or `"tag:index"`; a key
+that is misspelled, empty, or names some other kind of scope raises `GuardConfigError`
+while the guard is being built. A key no call could ever match is a cap that silently
+never fires, and a limit that reports it is working while doing nothing is the exact
+failure this library exists to prevent. A `NaN` limit is refused for the same reason —
+every comparison against `NaN` is false.
+
+**The run-level limit is checked first**, so when both are over, the trip you get is
+`BudgetExceeded`. "The run is over budget" is the more urgent fact, and it is the one
+whose exception carries `max_usd`.
+
+**Calls with no tool or no tag belong to no scope.** They are covered by `max_usd` and
+nothing else. There is no `"(unattributed)"` scope to cap, because a caller who wanted
+to cap that bucket would have to name it, and naming it is what `guard.tool(...)` and
+`guard.step(tag=...)` are for.
+
+Cost accumulates as calls are recorded, so the check is O(1) per call rather than a
+scan of the run so far — and a scoped cap counts spend restored from a
+[checkpoint](#checkpointing), because a resumed run that had already spent its
+allowance has still spent it.
+
+```bash
+python examples/scoped_budgets.py
+```
+
+## Threads and attribution
+
+Live attribution travels in `contextvars`, which are copied into an `asyncio` task
+but **not** into any thread — not `threading.Thread`, not a `ThreadPoolExecutor`
+worker. Each starts with the defaults.
+
+The money is never lost: a call recorded on a worker thread is counted, priced, and
+in the report. What is lost is the *attribution* — `step` and `tool` are `None`, so
+`by_tag` and `by_tool` under-report, and a `scoped_budgets` cap on that tool never
+fires. Two ways to carry it over, both captured at the moment you call them:
+
+```python
+with guard.step(tag="fan-out"), guard.tool("fetch"):
+    results = list(pool.map(guard.bind(fetch), urls))   # wraps one callable
+```
+
+```python
+def worker(ctx):
+    with ctx:                 # ctx = guard.context(), captured in the main thread
+        ...
+```
+
+`guard.bind(...)` is the one-argument form of `guard.context()`. Both install nothing
+when there is no ambient step or tool, so calling them outside a block is a no-op
+rather than an error.
+
 ## Pre-flight: refuse a call *before* paying for it
 
 A post-hoc budget check can only report overspend. `preflight()` refuses a call whose
@@ -160,6 +235,23 @@ Input tokens are estimated from the serialised prompt, because counting them pro
 needs a provider tokenizer that agent-guard deliberately does not depend on. Treat
 pre-flight as a net for catastrophic calls, not as an accounting figure — the number
 in the report is what the provider said, not what pre-flight guessed.
+
+**The unpriced hole, and how to close it.** For a model with no price at all,
+`preflight()` returns `0.0` and does *not* refuse. That is deliberate: an unbounded
+cost cannot be shown to exceed the budget, and refusing every call to an unpriced
+model would be a different failure than overspending. It is also a real hole in a
+gate you were treating as a hard stop — an expensive model that is merely absent from
+the price table sails straight through. So `strict=True` refuses it instead:
+
+```python
+guard.preflight("mystery-model", input_tokens=200_000, strict=True)
+# BudgetExceeded, with .unpriced_model set
+```
+
+`Guard(preflight_strict=True)` makes that the default, and it is already the default
+when `on_unknown_model="error"` — someone who has said "an unpriced model is an error"
+does not want the pre-flight gate waving one through.
+
 
 ## Prices: the whole configuration
 
@@ -298,9 +390,62 @@ consequences worth knowing:
   `agentguard config disable <model>` is there when you would rather have the other
   behaviour.
 - **A model newer than the snapshot is unpriced**, which is safe but not useful: your
-  cap will not fire for it. This is the argument for an opt-in, checksummed
-  `pricing --update` — first on the [roadmap](../ROADMAP.md). Until then a refresh
-  is a release, and `agentguard config set` is the two-command answer.
+  cap will not fire for it. That is what the refresh below is for.
+
+### Refreshing the table
+
+The bundled table is a snapshot of public list prices taken on `PRICING_AS_OF`. A
+provider can change a rate, or retire a model, the day after. Rather than making you
+wait for a patch, the table can be refreshed on purpose:
+
+```bash
+agentguard pricing --update              # download, verify, cache
+agentguard pricing --from-file cat.json  # ...or import one you already have
+agentguard pricing --status              # is a snapshot in effect, and from where
+agentguard pricing --no-snapshot         # show what the bundled table alone says
+agentguard pricing --remove              # forget it
+```
+
+Four decisions shape this, and each exists because the alternative is worse:
+
+**Never automatic.** `pricing --update` is the only command in agent-guard that
+touches the network. Nothing fetches prices at import, on a timer, or in a background
+thread. A hidden request during `import agentguard` would be a far worse bug than a
+stale table — this library's whole promise is that nothing leaves your process.
+
+**Checksummed, and verified on every read.** The snapshot records the SHA-256 of its
+own model map and re-checks it whenever the file is loaded. An edited, truncated or
+corrupted snapshot raises rather than repricing models. Falling back silently would
+leave you believing prices had been refreshed when the bundled table is what is
+actually in effect.
+
+**Underneath everything you configured.** Precedence, lowest first: the **bundled
+table**, then the **snapshot**, then the **per-user config**, then the **project
+config** (if trusted), then `Guard(pricing=...)` in code. A downloaded public
+catalogue can reprice a bundled model, which is the point — but it can never override
+a rate you set deliberately, and it cannot introduce an alias or a `disable`.
+
+**Honest about what it cannot read.** A catalogue entry that carries no flat
+per-token rate is *skipped*, not guessed at: some entries publish `-1` to mean "priced
+elsewhere", and reading that as a number would bill those calls at a negative cost.
+So are **variants** — `model:batch` at half price, `model:free` at nothing — because
+they normalize to the same model name as the standard SKU and only one of the two can
+be stored. Keeping the cheaper one was the first thing this code did, and it priced
+most of a real catalogue at the batch rate; an agent billed at list would then have a
+cap firing at twice the spend it thought it was tracking. A `:free` model therefore
+reports as *unpriced* rather than as `$0`, which is the same conservative choice this
+library makes everywhere else. The count of skipped entries is reported by `--update`
+and by `--status`.
+
+Two things worth knowing about the file itself. It lives beside your config
+(`pricing-snapshot.json` in the same directory) and merges by the same rules, so
+`$AGENTGUARD_CONFIG=none` disables both and `Guard(use_snapshot=False)` disables just
+this layer. And catalogue ids are namespaced (`anthropic/claude-sonnet-4.5`) while
+providers report the bare name — `normalize_model_key` strips the namespace on both
+sides of the lookup, so the two meet.
+
+Until a snapshot exists, `agentguard config set` remains the two-command answer for
+one model, and a refresh is a release.
 
 ## Checkpointing
 
@@ -401,8 +546,13 @@ agentguard report run.json          # render a report saved by guard.save(...)
 agentguard report run.json --json
 agentguard pricing                  # effective table, with a source per model
 agentguard pricing --no-config      # bundled prices only
+agentguard pricing --no-snapshot    # ...and no downloaded snapshot either
 agentguard pricing --json           # everything, for tooling
 agentguard pricing gpt-4o           # one model, with example costs
+agentguard pricing --update         # refresh from a public catalogue
+agentguard pricing --from-file CAT  # import a catalogue you already have
+agentguard pricing --status         # what the snapshot layer is doing
+agentguard pricing --remove         # back to bundled prices
 agentguard config path              # where config is read from, and what is ignored
 agentguard config init              # write a starter file
 agentguard config set NAME IN OUT [--cached C]
@@ -413,7 +563,8 @@ agentguard config list
 ```
 
 `config set` and friends take `--user` / `--project` / `--file` to choose which file
-they write.
+they write. `pricing --update` is the only one that touches the network; `--url`
+points it somewhere other than the default source.
 
 ```bash
 $ agentguard pricing gpt-4o
@@ -480,6 +631,11 @@ that fires on healthy work is worse than no detector.
 - **Cycle detection is bounded** to patterns of 2–4 steps by default, and similarity
   compares a bounded prefix of each fingerprint, so two very long tool payloads that
   differ only near the end may read as similar. Both bounds are adjustable.
+- **A fingerprint is truncated at 256 characters**, but never ambiguously: the head,
+  the tail and the digest of the whole payload are all kept, so two different calls
+  can never share one. This is stricter than it sounds necessary, and it is not —
+  truncating to a head alone made an agent indexing documents that share a boilerplate
+  body look like it was repeating itself.
 
 ## Development
 
@@ -487,7 +643,7 @@ that fires on healthy work is worse than no detector.
 git clone https://github.com/yaoyuxiang-gnn/agent-guard
 cd agent-guard
 
-python -m unittest discover -s tests -t .   # no install required, 551 tests
+python -m unittest discover -s tests -t .   # no install required
 pytest --cov=agentguard                     # if you prefer pytest
 python examples/basic.py
 ```

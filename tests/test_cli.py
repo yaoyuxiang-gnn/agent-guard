@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 from agentguard import DEFAULT_PRICING, Guard
@@ -110,6 +111,137 @@ class PricingCommandTests(unittest.TestCase):
         self.assertIn("no bundled price", err)
         # The suggested fix must be copy-pasteable Python: balanced braces.
         self.assertIn("Guard(pricing={'not-a-real-model': (input_per_1m, output_per_1m)})", err)
+
+
+class PricingSnapshotCommandTests(unittest.TestCase):
+    """``agentguard pricing --update`` and friends.
+
+    Nothing here reaches the network: ``--from-file`` is the documented offline
+    path, and it exercises everything except the socket.
+    """
+
+    CATALOGUE: ClassVar[dict[str, object]] = {
+        "data": [
+            {"id": "openai/gpt-4o", "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
+            {
+                "id": "acme/brand-new",
+                "pricing": {
+                    "prompt": "0.000003",
+                    "completion": "0.000012",
+                    "input_cache_read": "0.0000003",
+                },
+            },
+            {"id": "x/router", "pricing": {"prompt": "-1", "completion": "-1"}},
+        ]
+    }
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.folder = Path(self._tmp.name)
+        self.catalogue = self.folder / "catalogue.json"
+        self.catalogue.write_text(json.dumps(self.CATALOGUE), encoding="utf-8")
+        self._env = mock.patch.dict(
+            os.environ,
+            {
+                "APPDATA": str(self.folder),
+                "LOCALAPPDATA": str(self.folder),
+                "XDG_CONFIG_HOME": str(self.folder),
+                CONFIG_ENV_VAR: "",
+            },
+        )
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def test_status_before_any_snapshot(self) -> None:
+        code, out, _ = run_cli("pricing", "--status")
+        self.assertEqual(code, 0)
+        self.assertIn("none", out)
+        self.assertIn("pricing --update", out)
+
+    def test_from_file_imports_a_catalogue(self) -> None:
+        code, out, _ = run_cli("pricing", "--from-file", str(self.catalogue))
+        self.assertEqual(code, 0)
+        self.assertIn("2 models", out)
+        self.assertIn("1 entry skipped", out)
+        self.assertIn("checksum", out)
+
+    def test_the_snapshot_then_reprices_the_table(self) -> None:
+        run_cli("pricing", "--from-file", str(self.catalogue))
+        code, out, _ = run_cli("pricing", "gpt-4o")
+        self.assertEqual(code, 0)
+        self.assertIn("$1", out)
+        self.assertNotIn("$2.5", out)
+
+    def test_the_snapshot_adds_a_model(self) -> None:
+        run_cli("pricing", "--from-file", str(self.catalogue))
+        code, out, _ = run_cli("pricing", "brand-new")
+        self.assertEqual(code, 0)
+        self.assertIn("$12", out)
+
+    def test_no_snapshot_shows_the_bundled_table(self) -> None:
+        run_cli("pricing", "--from-file", str(self.catalogue))
+        _, with_snapshot, _ = run_cli("pricing", "gpt-4o")
+        _, without, _ = run_cli("pricing", "--no-snapshot", "gpt-4o")
+        self.assertIn("$1", with_snapshot)
+        self.assertIn("$2.5", without)
+
+    def test_status_after_a_snapshot(self) -> None:
+        run_cli("pricing", "--from-file", str(self.catalogue))
+        code, out, _ = run_cli("pricing", "--status")
+        self.assertEqual(code, 0)
+        self.assertIn("2 models", out)
+        self.assertIn("checksum", out)
+
+    def test_remove_goes_back_to_bundled_prices(self) -> None:
+        run_cli("pricing", "--from-file", str(self.catalogue))
+        code, out, _ = run_cli("pricing", "--remove")
+        self.assertEqual(code, 0)
+        self.assertIn("removed", out)
+        _, out, _ = run_cli("pricing", "gpt-4o")
+        self.assertIn("$2.5", out)
+
+    def test_remove_with_nothing_to_remove_is_not_an_error(self) -> None:
+        code, out, _ = run_cli("pricing", "--remove")
+        self.assertEqual(code, 0)
+        self.assertIn("no price snapshot", out)
+
+    def test_a_missing_catalogue_file_fails_cleanly(self) -> None:
+        code, out, _ = run_cli("pricing", "--from-file", str(self.folder / "nope.json"))
+        self.assertEqual(code, 1)
+        self.assertIn("no such catalogue", out)
+
+    def test_a_catalogue_that_is_not_json_fails_cleanly(self) -> None:
+        broken = self.folder / "broken.json"
+        broken.write_text("{not json", encoding="utf-8")
+        code, out, _ = run_cli("pricing", "--from-file", str(broken))
+        self.assertEqual(code, 1)
+        self.assertIn("cannot read", out)
+
+    def test_update_and_from_file_together_is_refused(self) -> None:
+        code, out, _ = run_cli("pricing", "--update", "--from-file", str(self.catalogue))
+        self.assertEqual(code, 2)
+        self.assertIn("Pick one", out)
+
+    def test_status_reports_a_corrupt_snapshot_as_unusable(self) -> None:
+        run_cli("pricing", "--from-file", str(self.catalogue))
+        path = user_config_path().with_name("pricing-snapshot.json")
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["models"]["gpt-4o"]["input"] = 0.5
+        path.write_text(json.dumps(document), encoding="utf-8")
+        code, out, _ = run_cli("pricing", "--status")
+        self.assertEqual(code, 1)
+        self.assertIn("UNUSABLE", out)
+
+    def test_a_bom_in_the_catalogue_is_tolerated(self) -> None:
+        # A JSON file saved by a Windows editor usually has one.
+        bommed = self.folder / "bommed.json"
+        bommed.write_text(json.dumps(self.CATALOGUE), encoding="utf-8-sig")
+        code, out, _ = run_cli("pricing", "--from-file", str(bommed))
+        self.assertEqual(code, 0)
+        self.assertIn("2 models", out)
 
 
 class GeneralTests(unittest.TestCase):

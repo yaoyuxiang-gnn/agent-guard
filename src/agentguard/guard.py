@@ -27,8 +27,11 @@ Three integration depths, from least to most magic::
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
+import functools
 import json
+import math
 import os
 import threading
 import time
@@ -43,6 +46,7 @@ from ._util import stable_json
 from .config import PricingConfig, load_config
 from .exceptions import (
     BudgetExceeded,
+    BudgetScopeExceeded,
     GuardConfigError,
     GuardStopped,
     GuardTripped,
@@ -80,6 +84,14 @@ _current_guard: contextvars.ContextVar[Guard | None] = contextvars.ContextVar(
 _current_step: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "agentguard_step", default=None
 )
+#: The tag of the step whose ``with guard.step(tag=...)`` block is on the stack.
+#: Held in a contextvar rather than read off the ``Step`` object so that
+#: :meth:`Guard.bind` can carry it into a worker thread, where the ``Step`` instance
+#: is out of scope but the attribution still has to be right.
+_current_tag: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "agentguard_tag", default=None
+)
+
 #: The tool whose ``with guard.tool(...)`` block is on the stack, so a call made
 #: inside it can be attributed to that tool without the call site repeating itself.
 _current_tool: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -127,11 +139,12 @@ class Step:
     (1, 'research')
     """
 
-    __slots__ = ("_guard", "_token", "index", "tag")
+    __slots__ = ("_guard", "_tag_token", "_token", "index", "tag")
 
     def __init__(self, guard: Guard, index: int, tag: str | None = None) -> None:
         self._guard = guard
         self._token: contextvars.Token[int | None] | None = None
+        self._tag_token: contextvars.Token[str | None] | None = None
         #: 1-based step number.
         self.index = index
         #: Optional free-form label, carried onto every call recorded in the step.
@@ -139,6 +152,7 @@ class Step:
 
     def __enter__(self) -> Step:
         self._token = _current_step.set(self.index)
+        self._tag_token = _current_tag.set(self.tag)
         return self
 
     def __exit__(
@@ -147,6 +161,9 @@ class Step:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> Literal[False]:
+        if self._tag_token is not None:
+            _current_tag.reset(self._tag_token)
+            self._tag_token = None
         if self._token is not None:
             _current_step.reset(self._token)
             self._token = None
@@ -189,6 +206,13 @@ class Guard:
     :param max_tokens: Stop once total input+output tokens exceed this count.
     :param max_steps: Stop once this many steps have been opened.
     :param max_seconds: Stop once this much wall-clock time has elapsed.
+    :param scoped_budgets: Per-tool and per-tag dollar caps, as
+        ``{"tool:<name>": 1.0, "tag:<name>": 0.5}``. A whole-run budget cannot
+        answer "which part of this run is too expensive", so one runaway tool can
+        spend the entire allowance before ``max_usd`` notices. A scope whose spend
+        exceeds its cap trips :class:`~agentguard.BudgetScopeExceeded`, naming the
+        tool or the tag. Calls attributed to no tag or no tool are not covered by
+        any scope, because they belong to no bucket a caller could have named.
     :param on_trip: What to do when a limit fires. ``"raise"`` (default) raises
         the trip exception at that moment; ``"warn"`` emits a
         :class:`RuntimeWarning` and keeps going, for measuring before enforcing;
@@ -214,9 +238,19 @@ class Guard:
     :param config_path: Load exactly this config file instead of discovering one.
     :param config: A prebuilt :class:`~agentguard.PricingConfig`, bypassing
         discovery. ``Guard(pricing=...)`` still wins over anything from a file.
+    :param use_snapshot: Read a downloaded price
+        :mod:`~agentguard.snapshot` if one exists (default ``True``). Set ``False``
+        to bill from the bundled table and your config alone. ``use_config=False``
+        disables both, since a snapshot *is* a config layer.
     :param default_price: Price to assume for models with no entry. When omitted,
         unknown models are counted as *unpriced* rather than guessed.
     :param on_unknown_model: ``"warn"`` (default), ``"error"`` or ``"ignore"``.
+        Also sets the default for :meth:`preflight`, which refuses an unpriced model
+        outright when this is ``"error"`` — see :paramref:`preflight_strict`.
+    :param preflight_strict: Whether :meth:`preflight` refuses a model it cannot
+        price. Defaults to ``True`` when ``on_unknown_model="error"`` and ``False``
+        otherwise: someone who has already said "an unpriced model is an error"
+        does not want the pre-flight gate to wave one through.
     :param loop_detection: Set ``False`` to disable detectors entirely.
     :param detectors: Replace the default action detectors. See :mod:`agentguard.loop`.
     :param progress_detectors: Replace the default progress detectors.
@@ -241,8 +275,10 @@ class Guard:
         "_on_trip",
         "_on_trip_callback",
         "_on_unknown_model",
+        "_preflight_strict",
         "_pricing_config",
         "_progress_monitor",
+        "_scoped_budgets",
         "_skipped_detectors",
         "_steps",
         "_tracker",
@@ -258,6 +294,7 @@ class Guard:
         max_tokens: int | None = None,
         max_steps: int | None = None,
         max_seconds: float | None = None,
+        scoped_budgets: Mapping[str, float] | None = None,
         on_trip: str = "raise",
         on_trip_callback: Callable[[GuardTripped], None] | None = None,
         name: str | None = None,
@@ -266,10 +303,12 @@ class Guard:
         disable: Sequence[str] = (),
         price_table: PriceTable | None = None,
         use_config: bool = True,
+        use_snapshot: bool = True,
         config_path: str | Path | None = None,
         config: PricingConfig | None = None,
         default_price: Price | None = None,
         on_unknown_model: str = "warn",
+        preflight_strict: bool | None = None,
         loop_detection: bool = True,
         detectors: Sequence[Detector] | None = None,
         progress_detectors: Sequence[Detector] | None = None,
@@ -282,6 +321,7 @@ class Guard:
             max_seconds=max_seconds,
             on_trip=on_trip,
         )
+        self._scoped_budgets = _validate_scoped_budgets(scoped_budgets)
 
         self._lock = threading.RLock()
         self._clock = clock
@@ -295,6 +335,9 @@ class Guard:
         self._on_trip = on_trip
         self._on_trip_callback = on_trip_callback
         self._on_unknown_model = on_unknown_model
+        self._preflight_strict = (
+            on_unknown_model == "error" if preflight_strict is None else bool(preflight_strict)
+        )
         self._default_price = default_price
         self._tripped: GuardTripped | None = None
         self._warned_empty = False
@@ -312,13 +355,16 @@ class Guard:
             table = price_table
             self._pricing_config = PricingConfig(sources=price_table.sources)
         else:
-            self._pricing_config = self._load_pricing_config(config, config_path, use_config)
+            self._pricing_config = self._load_pricing_config(
+                config, config_path, use_config, use_snapshot
+            )
             table = PriceTable.from_config(
                 self._pricing_config,
                 overrides=pricing,
                 aliases=aliases,
                 disable=disable,
             )
+
         self._tracker = CostTracker(
             table,
             default_price=default_price,
@@ -345,6 +391,7 @@ class Guard:
         config: PricingConfig | None,
         config_path: str | Path | None,
         use_config: bool,
+        use_snapshot: bool = True,
     ) -> PricingConfig:
         """Pick the pricing config: explicit object, explicit path, or discovery.
 
@@ -358,7 +405,7 @@ class Guard:
             return load_config(config_path)
         if not use_config:
             return PricingConfig()
-        return load_config()
+        return load_config(use_snapshot=use_snapshot)
 
     def __enter__(self) -> Guard:
         _entry_tokens.set((*_entry_tokens.get(), _current_guard.set(self)))
@@ -611,6 +658,62 @@ class Guard:
         """The active action detectors."""
         return self._action_monitor.detectors
 
+    # -- context -------------------------------------------------------------
+
+    def context(self) -> _CapturedContext:
+        """Re-install the calling context's step, tag and tool in a worker thread.
+
+        **No thread inherits a** :mod:`contextvars` **context** — not a
+        :class:`threading.Thread`, not a ``ThreadPoolExecutor`` worker. Each starts
+        with the defaults, so ``guard.record(...)`` called inside one is still
+        counted (the money is never lost) but belongs to no step and no tool. The
+        visible consequences are that ``by_tag``/``by_tool`` under-report and a
+        ``scoped_budgets`` cap on that tool never fires::
+
+            with guard.step(tag="fan-out"):
+                with guard.tool("fetch"):
+                    ctx = guard.context()
+                    with ThreadPoolExecutor(8) as pool:
+                        list(pool.map(lambda url: fetch(url, ctx), urls))
+
+        Use :meth:`bind` for the one-argument form, or this directly for a
+        longer-lived worker::
+
+            def worker(ctx):
+                with ctx:
+                    ...
+
+        Nothing is installed when there is no ambient context to copy, so calling
+        it outside a step or tool block is a no-op rather than an error.
+
+        The context is captured **when this method is called**, not when the block
+        is entered — that is the whole point, since a worker thread's context is
+        empty and reading it there would capture nothing.
+        """
+        return _CapturedContext(_current_step.get(), _current_tag.get(), _current_tool.get())
+
+    def bind(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        """Wrap ``func`` so it runs with this moment's step and tool attribution.
+
+        The one-argument form of :meth:`context`, for handing work to a pool::
+
+            pool.submit(guard.bind(call_model), prompt)
+
+        The context is captured when ``bind`` is called, so binding inside the
+        ``with guard.step(...)`` block is what attaches the step — binding at import
+        time attaches nothing.
+        """
+        step = _current_step.get()
+        tag = _current_tag.get()
+        tool = _current_tool.get()
+
+        @functools.wraps(func)
+        def bound(*args: Any, **kwargs: Any) -> Any:
+            with _restore_context(step, tag, tool):
+                return func(*args, **kwargs)
+
+        return bound
+
     # -- steps ---------------------------------------------------------------
 
     def step(self, tag: str | None = None) -> Step:
@@ -682,6 +785,8 @@ class Guard:
 
         resolved_model = model or extract_model(response) or "unknown"
         step_index = step if step is not None else _current_step.get()
+        if tag is None:
+            tag = _current_tag.get()
         tool_name = tool if tool is not None else _current_tool.get()
 
         # A response that reports no usage at all is the single most dangerous
@@ -704,7 +809,7 @@ class Guard:
                 stacklevel=2,
             )
 
-        record = self._tracker.record(
+        record, failure = self._tracker.record_with_policy(
             model=resolved_model,
             usage=usage,
             elapsed_s=self.elapsed_s,
@@ -714,9 +819,15 @@ class Guard:
             meta=meta,
             price=price,
         )
+        # The call is accounted before either failure surfaces. A call that already
+        # went out is real money, and an exception that skipped the bookkeeping
+        # would quietly remove spent money from the report — for a budget overrun
+        # and for a model that cannot be priced alike.
         self._evaluate()
         if already_stopped:
             self.raise_if_tripped()
+        if failure is not None:
+            raise failure
         return record
 
     def preflight(
@@ -726,6 +837,7 @@ class Guard:
         input_tokens: int,
         max_output_tokens: int = 1024,
         price: Price | None = None,
+        strict: bool | None = None,
     ) -> float:
         """Refuse a call *before* making it if its worst case cannot fit.
 
@@ -734,14 +846,35 @@ class Guard:
         way to stop an expensive single call from overshooting a budget that a
         post-hoc check could only report after the money was gone.
 
-        Models with no known price return ``0.0``: agent-guard will not guess a
-        rate, and the call is flagged as unpriced afterwards instead.
+        A model with no known price returns ``0.0`` and is **not** refused by
+        default: its cost is unbounded, so it cannot be *shown* to exceed the
+        budget, and refusing every call to an unpriced model would be a different
+        failure than overspending. That default is a real hole in a hard gate,
+        though — an expensive model that is merely absent from the price table
+        sails through — so ``strict=True`` refuses it instead, with the same
+        :class:`~agentguard.BudgetExceeded` and
+        :attr:`~agentguard.BudgetExceeded.unpriced_model` set. Pass
+        ``strict=False`` to make the lenient behaviour explicit.
+
+        >>> guard = Guard(max_usd=100.0, use_config=False, on_unknown_model="ignore")
+        >>> guard.preflight("gpt-4o", input_tokens=1_000_000, max_output_tokens=1_000_000)
+        12.5
         """
         self.raise_if_tripped()
+        refuse_unpriced = self._preflight_strict if strict is None else strict
         resolved = price or self._tracker.price_table.resolve_price(model)
         if resolved is None:
             resolved = self._default_price
         if resolved is None:
+            if refuse_unpriced:
+                self._trip(
+                    BudgetExceeded(
+                        self.spent_usd,
+                        self._max_usd if self._max_usd is not None else float("inf"),
+                        model=model,
+                        unpriced_model=True,
+                    )
+                )
             return 0.0
 
         worst = resolved.worst_case_usd(
@@ -889,6 +1022,53 @@ class Guard:
         elapsed = self.elapsed_s
         if self._max_seconds is not None and elapsed > self._max_seconds:
             self._trip(TimeLimitExceeded(elapsed, self._max_seconds))
+            return
+
+        if self._scoped_budgets:
+            self._evaluate_scopes()
+
+    def _evaluate_scopes(self) -> None:
+        """Check per-tool and per-tag caps, cheapest scope first.
+
+        Walked in sorted order so that two scopes tripping on the same call always
+        report the same one — a verdict that depended on dict ordering would be a
+        verdict that changes between runs.
+        """
+        for scope, name, limit in self._scoped_budget_order():
+            spent = self._scope_spend(scope, name)
+            if spent > limit:
+                self._trip(BudgetScopeExceeded(scope, name, spent, limit))
+                return
+
+    def _scoped_budget_order(self) -> list[tuple[str, str, float]]:
+        """``(scope, name, limit)`` for every configured cap, in a stable order."""
+        ordered: list[tuple[str, str, float]] = []
+        for key in sorted(self._scoped_budgets):
+            scope, _, name = key.partition(":")
+            ordered.append((scope, name, self._scoped_budgets[key]))
+        return ordered
+
+    def _scoped_spend(self) -> dict[str, float]:
+        """What each configured scope has cost, keyed as ``"tool:name"``."""
+        spend: dict[str, float] = {}
+        for scope, name, _ in self._scoped_budget_order():
+            spend[f"{scope}:{name}"] = self._tracker.scope_totals(scope).get(name, 0.0)
+        return spend
+
+    def _scope_spend(self, scope: str, name: str) -> float:
+        """Dollars recorded against one tool or one tag so far."""
+        return self._tracker.scope_totals(scope).get(name, 0.0)
+
+    def scope_spend(self, scope: str, name: str) -> float:
+        """What one tool or tag has cost so far, whether or not it is capped.
+
+        >>> guard = Guard(use_config=False, on_unknown_model="ignore")
+        >>> with guard.step(tag="search"):
+        ...     _ = guard.record("gpt-4o", input_tokens=1_000_000)
+        >>> round(guard.scope_spend("tag", "search"), 2)
+        2.5
+        """
+        return self._scope_spend(scope, name)
 
     def _trip(self, exc: GuardTripped) -> None:
         """Record a trip, then honour the configured ``on_trip`` mode."""
@@ -954,6 +1134,8 @@ class Guard:
                 max_steps=self._max_steps,
                 elapsed_s=self.elapsed_s,
                 max_seconds=self._max_seconds,
+                scoped_budgets=self._scoped_budgets,
+                scope_spend=self._scoped_spend(),
             ),
             by_model=by_model,
             by_tag=by_tag,
@@ -997,6 +1179,65 @@ class Guard:
         if self._tripped is not None:
             bits.append(f"tripped={self._tripped.reason}")
         return f"Guard({', '.join(bits)})"
+
+
+class _CapturedContext:
+    """A step/tag/tool triple, installed on ``__enter__`` in whatever thread enters.
+
+    Deliberately not a ``@contextmanager`` function: those evaluate the body lazily,
+    so ``with guard.context():`` inside a worker would read the *worker's* empty
+    context instead of the caller's. Capturing on construction is what makes
+    ``guard.context()`` mean "this moment, carried over there".
+    """
+
+    __slots__ = ("_step", "_tag", "_tokens", "_tool")
+
+    def __init__(self, step: int | None, tag: str | None, tool: str | None) -> None:
+        self._step = step
+        self._tag = tag
+        self._tool = tool
+        self._tokens: tuple[contextvars.Token[Any], ...] = ()
+
+    def __enter__(self) -> None:
+        tokens: list[contextvars.Token[Any]] = []
+        if self._step is not None:
+            tokens.append(_current_step.set(self._step))
+        if self._tag is not None:
+            tokens.append(_current_tag.set(self._tag))
+        if self._tool is not None:
+            tokens.append(_current_tool.set(self._tool))
+        self._tokens = tuple(tokens)
+        return None
+
+    def __exit__(self, *exc: object) -> Literal[False]:
+        # Reverse order, so a nested tool/step pair unwinds the way it went in.
+        for token in reversed(self._tokens):
+            if token.var is _current_tool:
+                _current_tool.reset(token)
+            elif token.var is _current_tag:
+                _current_tag.reset(token)
+            else:
+                _current_step.reset(token)
+        self._tokens = ()
+        return False
+
+
+@contextlib.contextmanager
+def _restore_context(step: int | None, tag: str | None, tool: str | None) -> Iterator[None]:
+    """Install a captured step/tag/tool for a block, then put the previous ones back."""
+
+    step_token = _current_step.set(step) if step is not None else None
+    tag_token = _current_tag.set(tag) if tag is not None else None
+    tool_token = _current_tool.set(tool) if tool is not None else None
+    try:
+        yield
+    finally:
+        if tool_token is not None:
+            _current_tool.reset(tool_token)
+        if tag_token is not None:
+            _current_tag.reset(tag_token)
+        if step_token is not None:
+            _current_step.reset(step_token)
 
 
 def _loop_exception(verdict: LoopVerdict) -> LoopDetected:
@@ -1045,6 +1286,41 @@ def _read_detector_states(value: Any) -> list[Mapping[str, Any] | None]:
                 f"got {type(state).__name__}"
             )
     return states
+
+
+def _validate_scoped_budgets(scoped: Mapping[str, float] | None) -> dict[str, float]:
+    """Normalize ``{"tool:name": usd}`` into a checked map, at construction.
+
+    A scope key that no call could ever match is a cap that silently never fires,
+    which is the failure this library exists to prevent — so an unparseable key is
+    an error here rather than a no-op at 3am.
+    """
+    if scoped is None:
+        return {}
+    if not isinstance(scoped, Mapping):
+        raise GuardConfigError(
+            f"scoped_budgets must be a mapping of 'tool:<name>' / 'tag:<name>' to a "
+            f"USD limit, got {type(scoped).__name__}"
+        )
+    validated: dict[str, float] = {}
+    for key, value in scoped.items():
+        where = f"scoped_budgets[{key!r}]"
+        if not isinstance(key, str):
+            raise GuardConfigError(f"{where}: keys must be strings like 'tool:search'")
+        scope, separator, name = key.partition(":")
+        if not separator or scope not in ("tool", "tag"):
+            raise GuardConfigError(f"{where}: expected 'tool:<name>' or 'tag:<name>', got {key!r}")
+        if not name:
+            raise GuardConfigError(f"{where}: the {scope} name is empty")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise GuardConfigError(f"{where}: limit must be a number, got {type(value).__name__}")
+        limit = float(value)
+        if not math.isfinite(limit) or limit <= 0:
+            # NaN matters most: every comparison against NaN is false, so a NaN
+            # limit would be a scope that can never trip.
+            raise GuardConfigError(f"{where}: limit must be finite and > 0, got {value!r}")
+        validated[key] = limit
+    return validated
 
 
 def _validate_limits(

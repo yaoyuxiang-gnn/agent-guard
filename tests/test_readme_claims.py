@@ -15,6 +15,7 @@ mask which detector actually owns the signal.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from agentguard import (
     CycleDetector,
@@ -156,6 +157,99 @@ class READMEClaimsTests(unittest.TestCase):
         )
 
         self.assertEqual(NoProgressDetector().max_stagnant, 6)
+
+
+class DocumentedNumbersTests(unittest.TestCase):
+    """Numbers quoted in the docs that nothing else would catch going stale.
+
+    ``tests/test_api_reference.py`` checks names and signatures, and this module
+    checks the detector table, but the prose carries a third kind of claim: counts
+    and limits a reader takes at face value. A renamed constant or a retuned bound
+    used to leave them silently wrong — ``docs/DETAILS.md`` advertised 551 tests
+    while the suite ran 588.
+    """
+
+    def test_loop_constants_match_what_the_reference_publishes(self) -> None:
+        # docs/API.md: "Signatures are truncated to 512 characters" and
+        # "SimilarityDetector(threshold=0.95, window=8, max_similar=3,
+        # compare_chars=512)" were the pre-fix values.
+        from agentguard.loop import _DEFAULT_COMPARE_CHARS, _MAX_SIGNATURE_LEN
+
+        reference = (Path(__file__).resolve().parent.parent / "docs" / "API.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            f"call_signature(name, args=None, *, max_len={_MAX_SIGNATURE_LEN})", reference
+        )
+        self.assertIn(f"compare_chars={_DEFAULT_COMPARE_CHARS}", reference)
+
+    def test_a_documented_signature_stays_within_its_documented_bound(self) -> None:
+        from agentguard.loop import _MAX_SIGNATURE_LEN
+
+        long_signature = Guard.call_signature("tool", {"blob": "x" * 100_000})
+        self.assertLessEqual(len(long_signature), _MAX_SIGNATURE_LEN + 60)
+
+    def test_the_readme_quickstart_claims_the_guard_it_describes(self) -> None:
+        # The README's opening sample: a $1.00 cap, 25 steps, and three things
+        # happening "on their own".
+        guard = Guard(max_usd=1.00, max_steps=25)
+        self.assertEqual(guard.remaining_usd, 1.00)
+        with guard.step(tag="search") as step:
+            step.record("gpt-4o", input_tokens=8_000, output_tokens=400)
+        self.assertEqual(guard.steps, 1)
+        self.assertEqual(guard.calls, 1)
+        self.assertGreater(guard.spent_usd, 0.0)
+
+    def test_the_report_prints_the_limits_the_readme_tabulates(self) -> None:
+        # README's limit table, one row per documented name.
+        guard = Guard(
+            max_usd=1.00, max_tokens=500_000, max_steps=25, max_seconds=300, use_config=False
+        )
+        self.assertEqual(
+            [status.name for status in guard.report().limits],
+            ["budget", "tokens", "steps", "time"],
+        )
+
+    def test_the_documented_python_floor_is_still_declared(self) -> None:
+        # README: "Python 3.10+". pyproject.toml is the declaration; this fails if
+        # the two ever disagree.
+        pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('requires-python = ">=3.10"', pyproject)
+
+    def test_every_example_is_named_in_the_readme_and_run_in_ci(self) -> None:
+        # CONTRIBUTING: "An example nothing runs is documentation that has already
+        # drifted." The README's count and the files on disk are the same claim from
+        # two directions, so each is checked against the list CI actually runs.
+        root = Path(__file__).resolve().parent.parent
+        on_disk = sorted(path.name for path in (root / "examples").glob("*.py"))
+        self.assertTrue(on_disk, "no examples found")
+
+        ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        makefile = (root / "Makefile").read_text(encoding="utf-8")
+        for name in on_disk:
+            with self.subTest(example=name):
+                self.assertIn(f"examples/{name}", ci)
+                self.assertIn(f"examples/{name}", makefile)
+
+        numbers = {8: "Eight", 9: "Nine", 10: "Ten", 11: "Eleven", 12: "Twelve"}
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        self.assertIn(f"{numbers[len(on_disk)]} runnable programs", readme)
+
+    def test_every_documented_guard_parameter_is_current(self) -> None:
+        # docs/API.md lists Guard's arguments in prose, and the list changes whenever
+        # Guard gains a knob. A reader who cannot see `scoped_budgets` there has no
+        # way to discover it exists.
+        import inspect
+
+        root = Path(__file__).resolve().parent.parent
+        reference = (root / "docs" / "API.md").read_text(encoding="utf-8")
+        parameters = [
+            name for name in inspect.signature(Guard.__init__).parameters if name != "self"
+        ]
+        missing = [name for name in parameters if f"{name}=" not in reference]
+        self.assertEqual(missing, [], f"docs/API.md never names these Guard parameters: {missing}")
 
 
 if __name__ == "__main__":  # pragma: no cover

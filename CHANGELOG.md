@@ -7,7 +7,295 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-02
+
 ### Added
+
+
+- **`agentguard pricing --update`: refresh the price table without waiting for a
+  release.** The bundled table is dated, and a model released afterwards was billed
+  as *unpriced* — safe, because agent-guard refuses to guess a rate, but not useful,
+  because an unpriced call does not move the budget. This is the first item on the
+  roadmap, and the last piece of it that was missing.
+
+  ```bash
+  agentguard pricing --update              # download, verify, cache
+  agentguard pricing --from-file cat.json  # ...or import one you already have
+  agentguard pricing --status              # is a snapshot in effect, and from where
+  agentguard pricing --remove              # forget it
+  ```
+
+  Four decisions shape it:
+
+  * **Never automatic.** This is the only command in agent-guard that makes a network
+    request. Nothing fetches at import, on a timer, or in a background thread —
+    `urllib` is imported by `agentguard.snapshot` and reached from nowhere else. A
+    hidden request during `import agentguard` would be a worse bug than a stale table.
+  * **Checksummed, and verified on every read.** The snapshot records the SHA-256 of
+    its own model map and re-checks it on load. An edited, truncated or corrupted file
+    raises rather than repricing models; silently falling back would leave you
+    believing prices had been refreshed when the bundled table is what is in effect.
+  * **Underneath everything you configured.** Precedence is bundled table → snapshot →
+    per-user config → project config → `Guard(pricing=...)`. A downloaded catalogue can
+    reprice a bundled model, which is the point, but it can never override a rate you
+    set deliberately, and it cannot add an alias or a `disable`.
+  * **Honest about what it cannot read.** An entry with no flat per-token rate is
+    skipped rather than guessed at. Catalogues publish `-1` to mean "priced
+    elsewhere", and reading that as a rate would bill those calls at a *negative*
+    cost. Variants are skipped too — `model:batch` at half price, `model:free` at
+    nothing — because they normalize to the same model name as the standard SKU and
+    only one of the two can be stored. Keeping the cheaper one was this code's first
+    behaviour, and it priced most of a real catalogue at OpenRouter's *batch* rate;
+    a run billed at list would then have had a cap firing at twice the spend it
+    thought it was tracking. A `:free` model is therefore *unpriced* rather than
+    `$0`, the same conservative direction this library takes everywhere else.
+    Skipped entries are counted in the output.
+
+  Per-token strings are converted to per-1M rates in `Decimal` and rounded, so a
+  catalogue that says `0.0000002` yields exactly `0.2` rather than
+  `0.1999999999999998`. Parsed snapshots are memoised against the file's size and
+  modification time, because a guard is constructed per request and re-parsing a
+  400-model catalogue on every one cost 6.7ms; editing the file still takes effect on
+  the next guard.
+
+  `Guard(use_snapshot=False)` skips the layer. `$AGENTGUARD_CONFIG=none` disables it
+  along with every other config file, and `$AGENTGUARD_CONFIG=<path>` replaces
+  discovery entirely — that variable means "use exactly this", which cannot also mean
+  "and also read that".
+
+- **`scoped_budgets`: a dollar cap per tool or per tag.** A run-level `max_usd` can
+  only tell you the run got expensive; it cannot tell you *which part* of it did, so
+  one tool in a retry storm can spend the entire allowance before the ceiling notices.
+  `Guard(max_usd=5.0, scoped_budgets={"tool:search": 1.0, "tag:index": 0.5})` trips
+  `BudgetScopeExceeded`, which carries `scope`, `name`, `spent_usd` and `limit_usd`,
+  and the report prints the scope as its own limit row.
+
+  Scope keys are validated at construction, including a `NaN` limit — every comparison
+  against `NaN` is false, so a `NaN` cap would be a limit that reports it is working
+  while doing nothing. The run-level limit is checked first, so when both are over the
+  trip is `BudgetExceeded`. Totals accumulate as calls arrive rather than by scanning
+  the run, so the check is O(1) per call, and they are rebuilt on restore so a cap
+  counts spend inherited from a checkpoint. `guard.scope_spend(scope, name)` reads a
+  total whether or not it is capped.
+
+- **`guard.bind(func)` and `guard.context()`: attribution on worker threads.** No
+  thread inherits a `contextvars` context — not `threading.Thread`, not a
+  `ThreadPoolExecutor` worker — so a call recorded on one was counted but belonged to
+  no step and no tool. The money was never lost; the attribution was, and the
+  consequence was that `by_tag`/`by_tool` under-reported and a `scoped_budgets` cap on
+  that tool silently never fired. Both capture at the moment they are called, which is
+  what makes them work from the main thread, and both are no-ops with no ambient
+  context rather than errors.
+
+- **`preflight(strict=True)`: refuse a model that cannot be priced.** The lenient
+  default is defensible — an unbounded cost cannot be *shown* to exceed the budget —
+  but it left a hole in a gate callers treat as a hard stop, since an expensive model
+  merely absent from the price table sailed through. `strict=True` refuses it with
+  `BudgetExceeded.unpriced_model` set. `Guard(preflight_strict=True)` makes that the
+  default, and it is already the default when `on_unknown_model="error"`.
+
+- **Bedrock's Converse usage shape.** `inputTokens` / `outputTokens` /
+  `cacheReadInputTokens` / `reasoningTokens` are understood, so a Bedrock agent is
+  priced instead of landing in the unpriced report. `CONTRIBUTING.md` asks for exactly
+  this — extend `extract_usage()` rather than special-casing an adapter — and these
+  were the fields that were missing.
+
+- **`examples/scoped_budgets.py`** and **`examples/price_snapshot.py`**, both offline.
+  `tests/test_readme_claims.py` now asserts that every file in `examples/` is named in
+  the README's count, run by CI, and listed in the Makefile, because an example nothing
+  runs is documentation that has already drifted.
+
+
+
+- **Async coverage for the decorator.** `tests/test_decorators.py` had no `async`
+  test at all, which is why the bug above shipped: the guard being live inside a
+  coroutine, across an `await`, across an async generator, and cleared on both normal
+  completion and an exception are now all asserted.
+- **`tests/test_readme_claims.py` gains a `DocumentedNumbersTests` case.** The suite
+  checked detector names and defaults and `test_api_reference.py` checked names and
+  signatures, but the *numbers* in the prose were checked by nothing, which is how
+  `docs/DETAILS.md` came to advertise 551 tests against 588 actually running. The
+  documented truncation bound, the documented `compare_chars`, the README's limit
+  table and its `requires-python` claim are now asserted against the library.
+
+
+### Fixed
+
+
+- **`BudgetExceeded` gained `unpriced_model`**, set only by a strict pre-flight
+  refusal, so a handler can tell "this would overspend" from "this cannot be priced".
+- **`docs/API.md` documents the new parameters and members**, and a test now fails if
+  `Guard` gains an argument the reference never names. It caught all three of this
+  release's new ones.
+- **`ROADMAP.md`** moves price refreshing, scoped budgets and the smaller items to a
+  "Shipped in 0.4" section, and replaces the fulfilled item with what is genuinely
+  next: a `--check` drift report, per-provider sources, and `--url` presets.
+
+
+- **Truncating a fingerprint could make two different tool calls identical, so the
+  default detectors stopped healthy agents.** `call_signature()` kept the first 512
+  characters of a call and replaced the rest with a note — and the characters it
+  dropped were frequently the only ones that differed. An agent indexing documents
+  that share a boilerplate body (`{"body": "…500 bytes…", "id": 0}`, `id: 1`,
+  `id: 2`) produced *one* fingerprint for four different documents, so the third was
+  reported as `LoopDetected [repeat]` and the run was stopped. `id` and `path` sort
+  after the long fields in canonical JSON, so a head-only truncation discarded
+  precisely the argument the call was keyed on.
+
+  A truncated fingerprint now keeps a head, a tail, **and the digest of the whole
+  payload**, which makes "different call, different fingerprint" hold at any length.
+  The bound dropped from 512 to 256 characters. This is the failure mode
+  [CONTRIBUTING](CONTRIBUTING.md) ranks above all others — a detector that fires on
+  healthy work gets switched off, and then it catches nothing.
+
+- **`SimilarityDetector` no longer fires on work that is merely similar in shape.**
+  Two problems, both from applying a percentage threshold to text whose length the
+  caller controls:
+
+  *Length dilution.* On a two-thousand-character call a real difference of twenty
+  characters still scores 0.99, so *every* pair of similar calls cleared a 95% bar —
+  the same indexing scenario above, on a `SimilarityDetector` that had survived the
+  fingerprint fix. `compare_chars` now defaults to 128 and the comparison key folds
+  in the digest of the whole signature, so the ratio measures similarity of calls
+  rather than of whatever survived truncation.
+
+  *`difflib` autojunk.* `SequenceMatcher` discards characters making up more than 1%
+  of a sequence longer than 200, so a payload of repeated characters — base64, a CSV
+  column, whitespace-padded text — had most of itself declared "junk" and scored
+  **0.76** against a near-identical string where an honest comparison scores 0.96.
+  The same pair scored 0.76 or 0.96 depending only on how repetitive the payload was.
+  `autojunk` is now off.
+
+  Whitespace-only differences still score 1.0, so the paraphrase case the detector
+  exists for — `search("python asyncio")` then `search("python asyncio ")` — trips on
+  the fourth call exactly as documented.
+
+- **`@guarded` did nothing on an `async def` function.** The wrapper entered the guard,
+  called the function and exited — but calling an `async def` only builds a coroutine,
+  so the body ran *after* `__exit__`, where `current_guard()` returns `None`. Every
+  call inside an async agent therefore went unrecorded:
+
+  ```python
+  @guarded(max_usd=1.0)
+  async def agent():
+      current_guard().record(...)   # AttributeError: 'NoneType' has no attribute 'record'
+  ```
+
+  Async functions now get an async wrapper, so the guard stays entered across every
+  `await`; `async` generators get one too, since a generator body does not run when
+  the function is called either. `asyncio.iscoroutinefunction()` still reports `True`
+  for the decorated function. The rest of the package already handled async correctly
+  (`GuardedClient`, `GuardedStream`) — only the decorator was missed, and no test
+  covered it.
+
+- **`on_unknown_model="error"` lost the call it was refusing.** The error was raised
+  *instead of* creating the record, so a call that had already been made and already
+  been paid for disappeared from `guard.calls`, from `report().by_model` and from the
+  report entirely — `spent_usd` and `remaining_usd` both behaving as if it had never
+  happened. That is the definition
+  [SECURITY.md](SECURITY.md) gives for the most serious bug class in this project: a
+  documented usage pattern where an LLM call is made but not accounted for.
+
+  Accounting now happens first and the error is raised afterwards, matching the rule
+  `record()` already followed for a budget trip: **a call that has gone out is
+  recorded before any exception surfaces.** The call is counted as *unpriced*, never
+  as `$0` — `spent_usd` does not move for it — and `report().unpriced_models` names
+  it. `CostTracker` gains `record_with_policy()`, which returns
+  `(CallRecord, GuardConfigError | None)` for callers that want to handle the failure
+  themselves; `CostTracker.record()` is unchanged in signature and still raises.
+
+### Changed
+
+
+- **`BudgetExceeded` gained `unpriced_model`**, set only by a strict pre-flight
+  refusal, so a handler can tell "this would overspend" from "this cannot be priced".
+- **`docs/API.md` documents the new parameters and members**, and a test now fails if
+  `Guard` gains an argument the reference never names. It caught all three of this
+  release's new ones.
+- **`ROADMAP.md`** moves price refreshing, scoped budgets and the smaller items to a
+  "Shipped in 0.4" section, and replaces the fulfilled item with what is genuinely
+  next: a `--check` drift report, per-provider sources, and `--url` presets.
+
+
+- **Truncating a fingerprint could make two different tool calls identical, so the
+  default detectors stopped healthy agents.** `call_signature()` kept the first 512
+  characters of a call and replaced the rest with a note — and the characters it
+  dropped were frequently the only ones that differed. An agent indexing documents
+  that share a boilerplate body (`{"body": "…500 bytes…", "id": 0}`, `id: 1`,
+  `id: 2`) produced *one* fingerprint for four different documents, so the third was
+  reported as `LoopDetected [repeat]` and the run was stopped. `id` and `path` sort
+  after the long fields in canonical JSON, so a head-only truncation discarded
+  precisely the argument the call was keyed on.
+
+  A truncated fingerprint now keeps a head, a tail, **and the digest of the whole
+  payload**, which makes "different call, different fingerprint" hold at any length.
+  The bound dropped from 512 to 256 characters. This is the failure mode
+  [CONTRIBUTING](CONTRIBUTING.md) ranks above all others — a detector that fires on
+  healthy work gets switched off, and then it catches nothing.
+
+- **`SimilarityDetector` no longer fires on work that is merely similar in shape.**
+  Two problems, both from applying a percentage threshold to text whose length the
+  caller controls:
+
+  *Length dilution.* On a two-thousand-character call a real difference of twenty
+  characters still scores 0.99, so *every* pair of similar calls cleared a 95% bar —
+  the same indexing scenario above, on a `SimilarityDetector` that had survived the
+  fingerprint fix. `compare_chars` now defaults to 128 and the comparison key folds
+  in the digest of the whole signature, so the ratio measures similarity of calls
+  rather than of whatever survived truncation.
+
+  *`difflib` autojunk.* `SequenceMatcher` discards characters making up more than 1%
+  of a sequence longer than 200, so a payload of repeated characters — base64, a CSV
+  column, whitespace-padded text — had most of itself declared "junk" and scored
+  **0.76** against a near-identical string where an honest comparison scores 0.96.
+  The same pair scored 0.76 or 0.96 depending only on how repetitive the payload was.
+  `autojunk` is now off.
+
+  Whitespace-only differences still score 1.0, so the paraphrase case the detector
+  exists for — `search("python asyncio")` then `search("python asyncio ")` — trips on
+  the fourth call exactly as documented.
+
+- **`@guarded` did nothing on an `async def` function.** The wrapper entered the guard,
+  called the function and exited — but calling an `async def` only builds a coroutine,
+  so the body ran *after* `__exit__`, where `current_guard()` returns `None`. Every
+  call inside an async agent therefore went unrecorded:
+
+  ```python
+  @guarded(max_usd=1.0)
+  async def agent():
+      current_guard().record(...)   # AttributeError: 'NoneType' has no attribute 'record'
+  ```
+
+  Async functions now get an async wrapper, so the guard stays entered across every
+  `await`; `async` generators get one too, since a generator body does not run when
+  the function is called either. `asyncio.iscoroutinefunction()` still reports `True`
+  for the decorated function. The rest of the package already handled async correctly
+  (`GuardedClient`, `GuardedStream`) — only the decorator was missed, and no test
+  covered it.
+
+- **`on_unknown_model="error"` lost the call it was refusing.** The error was raised
+  *instead of* creating the record, so a call that had already been made and already
+  been paid for disappeared from `guard.calls`, from `report().by_model` and from the
+  report entirely — `spent_usd` and `remaining_usd` both behaving as if it had never
+  happened. That is the definition
+  [SECURITY.md](SECURITY.md) gives for the most serious bug class in this project: a
+  documented usage pattern where an LLM call is made but not accounted for.
+
+  Accounting now happens first and the error is raised afterwards, matching the rule
+  `record()` already followed for a budget trip: **a call that has gone out is
+  recorded before any exception surfaces.** The call is counted as *unpriced*, never
+  as `$0` — `spent_usd` does not move for it — and `report().unpriced_models` names
+  it. `CostTracker` gains `record_with_policy()`, which returns
+  `(CallRecord, GuardConfigError | None)` for callers that want to handle the failure
+  themselves; `CostTracker.record()` is unchanged in signature and still raises.
+
+
+- **Documentation corrected against the library.** `docs/DETAILS.md` said 551 tests;
+  `decorators.py` pointed at a `Guard.current` that has never existed; `SECURITY.md`
+  listed 0.2.x as the supported line while 0.3.2 was current; `CONTRIBUTING.md`
+  gave a `pricing <model>` command without saying it was the lookup rather than the
+  writer. `docs/API.md` documents the new truncation guarantee, the
+  `on_unknown_model` order of events, and `record_with_policy()`.
 
 - **`docs/API.md`: a reference for every public name.** The README is a tour and
   `DETAILS.md` explains the reasoning, but nothing listed the interface —

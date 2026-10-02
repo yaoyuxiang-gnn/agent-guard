@@ -44,6 +44,7 @@ guard = Guard(
     max_tokens=None,            # int    — input + output tokens
     max_steps=None,             # int    — guard.step() calls
     max_seconds=None,           # float  — wall clock since construction
+    scoped_budgets=None,        # {"tool:search": 1.0, "tag:index": 0.5}
     on_trip="raise",            # "raise" | "warn" | "stop"
     on_trip_callback=None,      # Callable[[GuardTripped], None]
     name=None,                  # str    — shown in the report
@@ -52,10 +53,12 @@ guard = Guard(
     disable=(),                 # bundled models to treat as unpriced
     price_table=None,           # a prebuilt PriceTable; skips config discovery
     use_config=True,            # read the user's pricing JSON
+    use_snapshot=True,          # ...and a downloaded price snapshot
     config_path=None,           # read exactly this file instead
     config=None,                # a prebuilt PricingConfig
     default_price=None,         # Price to assume for unknown models
     on_unknown_model="warn",    # "warn" | "error" | "ignore"
+    preflight_strict=None,      # refuse an unpriced model in preflight()
     loop_detection=True,        # False disables detectors entirely
     detectors=None,             # replace the action detectors
     progress_detectors=None,    # replace the progress detectors
@@ -65,6 +68,20 @@ guard = Guard(
 
 Every limit is optional and independent. **A `Guard()` with no arguments still
 detects loops and still produces a report** — it just cannot stop on cost.
+
+`scoped_budgets` caps one tool or one tag rather than the whole run, because a
+run-level ceiling cannot say *which* part of the run got expensive:
+
+```python
+guard = Guard(max_usd=5.0, scoped_budgets={"tool:search": 1.0, "tag:index": 0.50})
+```
+
+A scope whose spend exceeds its cap trips `BudgetScopeExceeded`, naming the tool or
+tag. Scope keys are `"tool:<name>"` / `"tag:<name>"` and are validated at
+construction — a key no call could ever match is a cap that silently never fires,
+which is the failure this library exists to prevent. `guard.scope_spend(scope, name)`
+reads the running total whether or not it is capped. Calls attributed to no tool or
+no tag are covered by no scope.
 
 Beyond the limits, three arguments decide how the guard behaves when something
 fires:
@@ -77,6 +94,21 @@ fires:
 
 Accounting happens before any exception, in all three modes: a call that already
 went out is recorded, so the report never denies money that was spent.
+
+`on_unknown_model` decides what a model with no known price does, and the same rule
+holds — **the call is recorded first, then the error is raised**:
+
+| `on_unknown_model` | Behaviour |
+|---|---|
+| `"warn"` (default) | Warn once per model, count the call as unpriced, keep going. |
+| `"error"` | Record the call as unpriced, then raise `GuardConfigError` from `record()`. |
+| `"ignore"` | Count it as unpriced, silently. |
+
+Under `"error"` the spend is still in `guard.calls`, `report().unpriced_calls` and
+`report().unpriced_models` when you catch the error, because the call it describes has
+already been made and already been paid for. The model is unpriced rather than billed
+at `$0` — an unknown price is not a price of zero, and `spent_usd` will not move for
+it in any of the three modes.
 
 A `Guard` is cheap; make one per request, task or job. A single shared guard cannot
 tell two concurrent agents apart.
@@ -98,6 +130,32 @@ tell two concurrent agents apart.
 | `guard.tracker` | `CostTracker` | The accounting object underneath. |
 | `guard.price_table` | `PriceTable` | The lookup actually in use. |
 | `guard.pricing_config` | `PricingConfig` | The config that produced it. |
+| `guard.scope_spend(scope, name)` | `float` | Dollars spent by one `"tool"` or `"tag"` so far. |
+
+### Attribution across threads
+
+`contextvars` are copied into a new `threading.Thread` but **not** into a
+`ThreadPoolExecutor` worker, which starts with an empty context. A call recorded
+there is still counted — the money is never lost — but it belongs to no step and no
+tool, so `by_tag` and `by_tool` under-report and a `scoped_budgets` cap on that tool
+never fires. Two ways to carry the context over:
+
+```python
+guard.bind(func)      # capture this moment's step/tag/tool around one call
+with guard.context(): # ...or around a whole block, inside the worker
+```
+
+```python
+with guard.step(tag="fan-out"):
+    with guard.tool("fetch"):
+        with ThreadPoolExecutor(8) as pool:
+            results = list(pool.map(guard.bind(fetch), urls))
+```
+
+Both capture **when they are called**, so call them inside the block whose
+attribution you want. Called with no ambient step or tool, they install nothing and
+are a no-op rather than an error.
+
 
 ### Lifecycle
 
@@ -211,8 +269,28 @@ therefore the same loop-detection verdict:
 'search()'
 ```
 
-Signatures are truncated to 512 characters, and an argument that cannot be
+Signatures are truncated to 256 characters, and an argument that cannot be
 serialised falls back to its `repr()` rather than raising.
+
+**Truncation is collision-free.** A truncated signature keeps the head of the call,
+the tail of it, and the digest of the whole payload:
+
+```python
+>>> '"id":7' in Guard.call_signature("index", {"body": "A" * 500, "id": 7})
+True
+>>> # Different calls never share a fingerprint, however long they are.
+>>> Guard.call_signature("t", {"b": "x" * 5000}) != Guard.call_signature("t", {"b": "x" * 4999 + "y"})
+True
+```
+
+That matters more than it sounds. An agent indexing documents that share a
+boilerplate body produces calls that differ only in an `id`, and a fingerprint that
+kept just a prefix would collapse all of them onto one string — so the third
+document would be reported as a repeated call and the run stopped. The digest makes
+"different call, different fingerprint" hold at any payload length; the tail keeps
+the argument a tool is actually keyed on visible, since `id` and `path` sort after
+the long fields in canonical JSON.
+
 
 ### preflight
 
@@ -323,17 +401,28 @@ row, not four.
 Detector                       # base class — subclass and implement observe()
 RepeatDetector(max_repeats=3, window=12)
 CycleDetector(min_cycle=2, max_cycle=4, repeats=2)
-SimilarityDetector(threshold=0.95, window=8, max_similar=3, compare_chars=512)
+SimilarityDetector(threshold=0.95, window=8, max_similar=3, compare_chars=128)
 NoProgressDetector(max_stagnant=6)
 
 LoopMonitor(detectors=None)    # runs detectors in order, returns the first verdict
 LoopVerdict(kind, detail, signature=None, count=0, step=None)
-call_signature(name, args=None, *, max_len=512) -> str
+call_signature(name, args=None, *, max_len=256) -> str
 ```
 
 `RepeatDetector`, `CycleDetector` and `SimilarityDetector` watch **tool calls** and
 are the defaults for `Guard(detectors=...)`. `NoProgressDetector` watches the
 **`progress()` channel** and is the default for `Guard(progress_detectors=...)`.
+
+`SimilarityDetector` compares the first `compare_chars` characters of each call's
+comparison key, which folds in a digest of the whole signature, and ignores
+whitespace-only differences. Two consequences worth knowing:
+
+* **Raising `compare_chars` makes it less sensitive, not more.** A percentage
+  threshold applied to longer text discriminates less: on a two-thousand-character
+  call, a genuine difference of twenty characters still scores 0.99.
+* **Genuinely different calls stay clean at any payload length**, including the
+  common shape where an agent indexes successive documents that share a body and
+  differ only in an `id`.
 
 A detector is a state machine fed one signature per observation. Return a verdict to
 stop the run, `None` to continue:
@@ -382,14 +471,34 @@ re-entrant lock and every read returns a consistent snapshot.
 | Member | Does |
 |---|---|
 | `record(*, model, usage, elapsed_s=0.0, tag=None, step=None, tool=None, meta=None, price=None)` | Account one call; returns a `CallRecord`. |
+| `record_with_policy(**same)` | Account one call; returns `(CallRecord, GuardConfigError \| None)`. |
 | `records` | `tuple[CallRecord, ...]` |
 | `calls`, `total_usd`, `unpriced_calls`, `unpriced_models` | Totals |
 | `usage`, `input_tokens`, `output_tokens`, `total_tokens` | Token totals |
 | `by_model()`, `by_tag()`, `by_tool()` | Breakdowns, as dicts of summaries |
+| `scope_totals(scope)` | `{name: usd}` for `"tool"` or `"tag"` |
 | `burn_rate_usd_per_step()` | Average dollars per accounted call, or `None` |
 | `as_dict()` | JSON form, including every record |
 | `get_state()`, `set_state()`, `restore()` | [Checkpointing](#checkpointing) |
 | `price_table` | The table in use |
+
+The two differ only under `on_unknown_model="error"`, and the difference is the
+order of two events that both have to happen: **the call is recorded first, then the
+error is raised.** `record()` raises it for you; `record_with_policy()` hands it back
+so a caller can re-evaluate its own limits first — which is what `Guard.record()`
+does, so a trip and a pricing failure surface in the documented order. Either way the
+record exists, because the call it describes has already been made and already been
+paid for; dropping it would remove real spend from the report.
+
+```python
+record, failure = tracker.record_with_policy(
+    model="mystery-model", usage=Usage(input_tokens=1000)
+)
+record.priced        # False — the cost is unknown, not zero
+failure              # GuardConfigError, for the caller to raise when ready
+tracker.unpriced_calls   # 1 — the call is in the totals, not lost
+```
+
 
 ```python
 Usage(input_tokens=0, output_tokens=0, cached_input_tokens=0, reasoning_tokens=0)
@@ -555,7 +664,8 @@ reasoning.
 GuardError
 ├── GuardConfigError          bad construction, bad config, unreadable snapshot
 └── GuardTripped              base class for "a limit fired"
-    ├── BudgetExceeded        max_usd
+    ├── BudgetExceeded        max_usd (or a strict pre-flight refusal)
+    ├── BudgetScopeExceeded   one entry in scoped_budgets
     ├── TokenLimitExceeded    max_tokens
     ├── StepLimitExceeded     max_steps
     ├── TimeLimitExceeded     max_seconds
@@ -573,10 +683,13 @@ refused a call.
 
 | Exception | Extra attributes |
 |---|---|
-| `GuardTripped` | `reason` (`"budget"`, `"tokens"`, `"steps"`, `"time"`, `"loop"`) |
+| `GuardTripped` | `reason` (`"budget"`, `"scope-budget"`, `"tokens"`, `"steps"`, `"time"`, `"loop"`) |
+| `BudgetExceeded` | `spent_usd`, `limit_usd`, `projected_usd`, `model`, `call_cost_usd`, `unpriced_model` |
+| `BudgetScopeExceeded` | `scope` (`"tool"`/`"tag"`), `name`, `spent_usd`, `limit_usd` |
 | `LoopDetected` | `kind`, `detail`, `signature`, `count`, `step` — copied from the verdict |
 | `GuardStopped` | `cause` — the trip it wraps |
 | `GuardConfigError` | none; the message names the offending value or file |
+
 
 ---
 
@@ -674,7 +787,9 @@ Installed as `agentguard`:
 
 ```bash
 agentguard report run.json [--json]
-agentguard pricing [MODEL] [--no-config] [--json]
+agentguard pricing [MODEL] [--no-config] [--no-snapshot] [--json]
+agentguard pricing --update [--url URL] | --from-file PATH
+agentguard pricing --status | --remove
 agentguard config path|init|list
 agentguard config set NAME INPUT OUTPUT [--cached C]
 agentguard config alias NAME TARGET
@@ -684,8 +799,10 @@ agentguard config disable NAME | enable NAME
 
 `config` commands take `--user` / `--project` / `--file` to choose which file they
 write. `agentguard report` renders a report saved by `guard.save()`, so the reading
-process needs nothing installed but the CLI. Exit codes: `0` success, `1` error
-(including an unknown model for `pricing MODEL`), `2` usage.
+process needs nothing installed but the CLI. `pricing --update` is the only command
+that makes a network request, and it is never run automatically. Exit codes: `0`
+success, `1` error (including an unknown model for `pricing MODEL` and an unusable
+snapshot for `pricing --status`), `2` usage.
 
 See [DETAILS.md](DETAILS.md#the-complete-cli) for full output examples.
 
@@ -703,7 +820,7 @@ agentguard.__all__      # 46 names
 | Group | Names |
 |---|---|
 | Core | `Guard`, `Step`, `guarded`, `current_guard` |
-| Errors | `GuardError`, `GuardTripped`, `GuardStopped`, `GuardConfigError`, `BudgetExceeded`, `TokenLimitExceeded`, `StepLimitExceeded`, `TimeLimitExceeded`, `LoopDetected` |
+| Errors | `GuardError`, `GuardTripped`, `GuardStopped`, `GuardConfigError`, `BudgetExceeded`, `BudgetScopeExceeded`, `TokenLimitExceeded`, `StepLimitExceeded`, `TimeLimitExceeded`, `LoopDetected` |
 | Loop detection | `Detector`, `RepeatDetector`, `CycleDetector`, `SimilarityDetector`, `NoProgressDetector`, `LoopMonitor`, `LoopVerdict`, `call_signature` |
 | Accounting | `Usage`, `CallRecord`, `CostTracker`, `ModelSummary`, `AttributionSummary`, `UNATTRIBUTED` |
 | Pricing | `Price`, `PriceTable`, `DEFAULT_PRICING`, `PRICING_AS_OF` |

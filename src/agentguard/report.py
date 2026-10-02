@@ -70,6 +70,10 @@ class LimitStatus:
     used: float
     limit: float
     unit: str
+    scope: str | None = None
+    """``"tool"`` or ``"tag"`` for a per-scope budget, ``None`` for a run-level limit."""
+    scope_name: str | None = None
+    """The tool or tag this row caps, when :attr:`scope` is set."""
 
     @property
     def fraction(self) -> float | None:
@@ -95,7 +99,18 @@ class LimitStatus:
             return str(int(value))
         return format_duration(value)
 
-    def render(self, *, bar_width: int = 16, ascii_only: bool = False) -> str:
+    def label(self) -> str:
+        """How this limit is named in the text report.
+
+        A scoped row says which scope it belongs to — two rows both labelled
+        ``budget`` would be indistinguishable in the section a reader scans while
+        panicking. :attr:`name` keeps the machine-readable ``"tool:search"`` form.
+        """
+        if self.scope and self.scope_name:
+            return f"{self.scope}:{self.scope_name}"
+        return self.name
+
+    def render(self, *, bar_width: int = 16, ascii_only: bool = False, label_width: int = 8) -> str:
         """Render as ``NAME  used / limit  pct  [bar]``."""
         filled, empty = ("#", ".") if ascii_only else ("█", "░")
         fraction = self.fraction
@@ -104,7 +119,10 @@ class LimitStatus:
         bar = filled * cells + empty * (bar_width - cells)
         pair = f"{self._format(self.used)} / {self._format(self.limit)}"
         marker = "!" if self.exceeded else " "
-        return f"{marker} {self.name:<8} {pair:<26} {format_percent(fraction):>7}  [{bar}]"
+        return (
+            f"{marker} {self.label():<{label_width}} {pair:<26} "
+            f"{format_percent(fraction):>7}  [{bar}]"
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +133,8 @@ class LimitStatus:
             "fraction": self.fraction,
             "remaining": self.remaining,
             "exceeded": self.exceeded,
+            "scope": self.scope,
+            "scope_name": self.scope_name,
         }
 
 
@@ -186,8 +206,12 @@ class Report:
         if self.limits:
             lines.append("")
             lines.append("  limits")
+            # Wide enough for the longest label in this report, so a scoped budget
+            # with a long tool name widens the column instead of shoving its row out
+            # of alignment with the others.
+            label_width = max(8, max(len(status.label()) for status in self.limits))
             for status in self.limits:
-                lines.append("  " + status.render(ascii_only=ascii_only))
+                lines.append("  " + status.render(ascii_only=ascii_only, label_width=label_width))
 
         if self.by_model:
             lines.append("")
@@ -315,6 +339,8 @@ class Report:
                 used=float(item["used"]),
                 limit=float(item["limit"]),
                 unit=str(item.get("unit", "")),
+                scope=item.get("scope"),
+                scope_name=item.get("scope_name"),
             )
             for item in data.get("limits") or ()
         )
@@ -388,8 +414,16 @@ def build_limits(
     max_steps: int | None,
     elapsed_s: float,
     max_seconds: float | None,
+    scoped_budgets: Mapping[str, float] | None = None,
+    scope_spend: Mapping[str, float] | None = None,
 ) -> tuple[LimitStatus, ...]:
-    """Assemble the limit rows for a report, skipping unconfigured limits."""
+    """Assemble the limit rows for a report, skipping unconfigured limits.
+
+    Scoped budgets come after the run-level ones, because "the run is over budget"
+    is the more urgent fact when both are true — and each is rendered with the tool
+    or tag it belongs to, so a reader never has to guess which ``budget`` row is
+    which.
+    """
     statuses: list[LimitStatus] = []
     if max_usd is not None:
         statuses.append(LimitStatus("budget", cost_usd, max_usd, "usd"))
@@ -399,4 +433,18 @@ def build_limits(
         statuses.append(LimitStatus("steps", float(steps), float(max_steps), "steps"))
     if max_seconds is not None:
         statuses.append(LimitStatus("time", elapsed_s, max_seconds, "seconds"))
+    if scoped_budgets:
+        spend = scope_spend or {}
+        for key in sorted(scoped_budgets):
+            scope, _, name = key.partition(":")
+            statuses.append(
+                LimitStatus(
+                    name=key,
+                    used=spend.get(key, 0.0),
+                    limit=scoped_budgets[key],
+                    unit="usd",
+                    scope=scope,
+                    scope_name=name,
+                )
+            )
     return tuple(statuses)

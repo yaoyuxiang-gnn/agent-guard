@@ -103,6 +103,15 @@ python examples/basic.py            # 换成预算上限：在 $0.057 / $0.05 �
 | `max_tokens=500_000` | 输入 + 输出 token 超过额度 |
 | `max_steps=25` | 第 26 次 `guard.step()` 被打开 |
 | `max_seconds=300` | 自 guard 创建以来的墙上时钟时间 |
+| `scoped_budgets={"tool:search": 1.0}` | 某个工具或某个标签超出自己那一份额度 |
+
+整轮预算只能告诉你「这轮变贵了」，却说不清**是哪一部分**变贵的。于是一个陷入重试风暴的工具可以在 `max_usd` 察觉之前就把整份额度花光，而「钱被谁吃了」的答案要等你事后翻报告。按作用域限预算是在事情发生**当时**回答这个问题，并且直接点名工具：
+
+```text
+  limits
+    budget     $0.0125 / $1                  1.2%  [................]
+  ! tool:fetch $0.0125 / $0.012            104.2%  [################]
+```
 
 四个检测器，以及每一个到底是干什么用的：
 
@@ -186,6 +195,16 @@ def summarise(url: str) -> str:
 
 `@guarded(max_usd=...)` 每次调用创建一个**全新的 guard**——这是请求处理器的正确默认值：一个调用方把预算用光，不该让下一个调用方也停下来。当花费需要跨调用累积时，传 `guard=` 给一个共享的 guard。
 
+装饰器同样覆盖 `async def`：guard 会跨越每一个 `await` 保持进入状态，而不是只维持到协程对象被创建为止，所以异步函数体里 `current_guard()` 是活的——异步生成器则是整个迭代期间都活着。
+
+**要把活儿分到线程里跑？** 任何线程都不会继承 `contextvars` 上下文，所以在线程池 worker 上记录的调用依然会**被计数**——钱一分都不会丢——但它不属于任何 step、任何 tool，于是 `scoped_budgets` 对那个工具的上限永远不会触发。两种把归属带过去的办法，都在你调用的那一刻捕获：
+
+```python
+with guard.step(tag="fan-out"), guard.tool("fetch"):
+    results = list(pool.map(guard.bind(fetch), urls))   # 按调用
+    # 或者：with guard.context():  ...                   # 按块，在 worker 内部
+```
+
 **在付钱之前拒绝一次调用。** 事后检查只能报告超支；`preflight()` 会拒绝一次「最坏情况塞不进剩余额度」的调用：
 
 ```python
@@ -240,6 +259,8 @@ agentguard report run.json           # 渲染 guard.save(...) 存下的报告
 agentguard report run.json --json
 agentguard pricing                   # 生效中的价格表，每个模型带来源
 agentguard pricing gpt-4o
+agentguard pricing --update          # 从公开目录刷新价格
+agentguard pricing --status          # 当前是否有快照生效，来自哪里
 agentguard config path               # 配置从哪读、忽略了什么
 ```
 
@@ -247,7 +268,13 @@ agentguard config path               # 配置从哪读、忽略了什么
 
 **零依赖，而且会一直保持。** 没有 `pydantic`、没有 `httpx`、没有 provider SDK——只有标准库。一旦 wheel 里出现运行时依赖，CI 会直接让构建失败。所以它可以被塞进一个 vendor 了自己依赖的技术栈、钉在旧版 Python 上、或者丢进 Lambda，都不需要动 lockfile。
 
-**价格表会过期。** 这一份是有日期的，而 provider 可能在你更新完的第二天就改价或下线某个模型。已退役的模型保留最后一次公布的价格，而不是被删掉——因为删掉一个名字会悄悄让它所有调用变成 unpriced。任何你要拿去出账的数字都该自己核实，任何你依赖的模型都该自己配置。那个诚实的解法——可选、带校验和的 `pricing --update`——**还没做**，它是 [roadmap](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md) 上的第一项。
+**价格表会过期。** 这一份是有日期的，而 provider 可能在你更新完的第二天就改价或下线某个模型。已退役的模型保留最后一次公布的价格，而不是被删掉——因为删掉一个名字会悄悄让它所有调用变成 unpriced。任何你要拿去出账的数字都该自己核实，任何你依赖的模型都该自己配置。不想等新版本的话，可以**主动**刷新：
+
+```bash
+agentguard pricing --update     # 一次显式下载，带校验和并缓存到本地
+```
+
+这是整个库唯一会碰网络的命令。没有任何东西会在 import 时、定时、或在后台去抓价格——抓回来的结果合并在你配置的**下面**，所以一份公开目录永远覆盖不掉你自己设定的价格。被改过或被截断的快照过不了自己的校验和，会被拒绝而不是拿去计费。见[详细文档](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md#refreshing-the-table)。
 
 **它不是什么。** 不是可观测性平台（什么都不往外发，没有服务端、没有后台线程）；不是代理（它看不到没人告诉它的流量）；不是分词器（预检的输入估算只是启发式）；也不能替代 provider 侧的消费限额——两个都要用。agent-guard 拦住**你的**循环；provider 的限额才是在你进程死掉、请求还在飞的时候救你的那一道。
 
@@ -259,12 +286,12 @@ agentguard config path               # 配置从哪读、忽略了什么
 |---|---|
 | [docs/API.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/API.md) | 每个公开名称：`Guard` 与 `Step`、记录、死循环检测、记账、定价、配置、异常、适配器、装饰器、命令行 |
 | [docs/DETAILS.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/docs/DETAILS.md) | 背后的理由：每个检测器及其调参、价格配置的信任模型、检查点格式、设计原则 |
-| [examples/](https://github.com/yaoyuxiang-gnn/agent-guard/tree/main/examples) | 八个可直接运行的程序——预算上限、四个检测器、包裹客户端、流式、LangGraph、自定义模型、检查点，以及一份真实报告 |
+| [examples/](https://github.com/yaoyuxiang-gnn/agent-guard/tree/main/examples) | 十个可直接运行的程序——预算上限、四个检测器、包裹客户端、流式、LangGraph、自定义模型、检查点、按工具限预算、价格快照刷新，以及一份真实报告 |
 | [CHANGELOG.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CHANGELOG.md) | 版本历史 |
 | [ROADMAP.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/ROADMAP.md) | 后续计划 |
 | [CONTRIBUTING.md](https://github.com/yaoyuxiang-gnn/agent-guard/blob/main/CONTRIBUTING.md) | 这个库遵守的四条约束 |
 
-包里每一个 docstring 示例都会作为测试运行，所以文档不可能和行为脱节——接口文档也用同样的标准核对：它的签名块、导出表、异常树都在 `tests/test_api_reference.py` 里被断言。`python -m unittest discover -s tests -t .` 跑完整套件——588 个测试，不联网，不需要下载任何 fixture。
+包里每一个 docstring 示例都会作为测试运行，所以文档不可能和行为脱节——接口文档也用同样的标准核对：它的签名块、导出表、异常树都在 `tests/test_api_reference.py` 里被断言。`python -m unittest discover -s tests -t .` 跑完整套件——746 个测试，不联网，不需要下载任何 fixture。
 
 ## 许可证
 

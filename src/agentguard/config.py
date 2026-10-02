@@ -84,6 +84,7 @@ from .pricing import (
     _coerce_price,
     normalize_model_key,
 )
+from .snapshot import snapshot_path
 
 __all__ = [
     "CONFIG_ENV_VAR",
@@ -123,6 +124,10 @@ CONFIG_VERSION = 1
 
 #: Project-level file names, checked in order in each directory.
 CONFIG_FILENAMES = ("agentguard.json", ".agentguard.json")
+
+#: Name of the downloaded price snapshot, which sits beside the per-user config and
+#: is recognised by :func:`_load_file` so it is read with its own parser.
+_SNAPSHOT_FILENAME = "pricing-snapshot.json"
 
 #: Values of :data:`CONFIG_ENV_VAR` that mean "load no config file at all".
 _OFF_VALUES = frozenset({"none", "off", "0", "false", "no", "disable", "disabled"})
@@ -495,6 +500,7 @@ def config_paths(
     start: str | Path | None = None,
     env: Mapping[str, str] | None = None,
     windows: bool | None = None,
+    use_snapshot: bool = True,
 ) -> tuple[Path, ...]:
     """Every config file that exists and would be loaded, in load order.
 
@@ -508,6 +514,11 @@ def config_paths(
     so reading it by default would let whoever wrote the repository reprice the
     models this guard bills.
 
+    A downloaded :mod:`~agentguard.snapshot` comes **first**, so it is the lowest
+    layer: everything you wrote yourself still wins. It is skipped when
+    ``$AGENTGUARD_CONFIG`` names a file, because that variable means "use exactly
+    this", and it is skipped when ``use_snapshot`` is false.
+
     >>> config_paths(env={CONFIG_ENV_VAR: "none"})
     ()
     """
@@ -519,6 +530,10 @@ def config_paths(
         return (explicit,) if explicit.is_file() else ()
 
     found: list[Path] = []
+    if use_snapshot:
+        snapshot = snapshot_path(env=environ)
+        if snapshot.is_file():
+            found.append(snapshot)
     user = user_config_path(env=environ, windows=windows)
     if user.is_file():
         found.append(user)
@@ -534,13 +549,16 @@ def load_config(
     start: str | Path | None = None,
     env: Mapping[str, str] | None = None,
     windows: bool | None = None,
+    use_snapshot: bool = True,
 ) -> PricingConfig:
     """Load and validate the effective configuration.
 
     Returns an empty (but valid) :class:`PricingConfig` when nothing is
     configured. Raises :class:`~agentguard.GuardConfigError` when a file was
     explicitly requested and is missing, or when any file is malformed. A
-    project-level file that exists but is not trusted is skipped, with a warning.
+    project-level file that exists but is not trusted is skipped, with a warning;
+    a downloaded price snapshot is read first and verified, and a corrupt one raises
+    rather than being silently ignored.
 
     >>> load_config(env={CONFIG_ENV_VAR: "off"}).is_empty
     True
@@ -561,8 +579,53 @@ def load_config(
     return _finalize(
         [
             _load_file(candidate, required=False)
-            for candidate in config_paths(start=start, env=environ, windows=windows)
+            for candidate in config_paths(
+                start=start, env=environ, windows=windows, use_snapshot=use_snapshot
+            )
         ]
+    )
+
+
+def _load_file(path: Path, *, required: bool) -> PricingConfig:
+    """Read one file. Field-level checks only; the merge step checks the whole."""
+    if not path.is_file():
+        if required:
+            raise GuardConfigError(f"config file not found: {path}")
+        return PricingConfig()
+    if path.name == _SNAPSHOT_FILENAME:
+        return _snapshot_config(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise GuardConfigError(f"cannot read config file {path}: {exc}") from exc
+    if not text.strip():
+        # A touched-but-empty file is a plausible accident; an empty config is
+        # still the honest reading of it, and every entry it lacks is unpriced.
+        return PricingConfig(sources=(path,))
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise GuardConfigError(f"{path} is not valid JSON: {exc}") from exc
+    return _parse_document(data, source=path, buildable=False)
+
+
+def _snapshot_config(path: Path) -> PricingConfig:
+    """A downloaded snapshot as a config layer.
+
+    The snapshot has its own schema — a flat ``{name: {input, output}}`` map with a
+    checksum — so it is parsed by :mod:`agentguard.snapshot` rather than by this
+    module's user-config parser, then handed back as the lowest merge layer. It is
+    never validated on its own: it is a floor under the user's own prices, and an
+    alias defined in the user file may legitimately only make sense once merged.
+    """
+    from .snapshot import read_snapshot_file
+
+    snapshot = read_snapshot_file(path)
+    return PricingConfig(
+        models=dict(snapshot.models),
+        aliases={},
+        disable=frozenset(),
+        sources=(path,),
     )
 
 
@@ -578,27 +641,6 @@ def _finalize(parts: list[PricingConfig]) -> PricingConfig:
         where = " and ".join(str(source) for source in merged.sources)
         _check_buildable(merged, f"{where}: ")
     return merged
-
-
-def _load_file(path: Path, *, required: bool) -> PricingConfig:
-    """Read one file. Field-level checks only; the merge step checks the whole."""
-    if not path.is_file():
-        if required:
-            raise GuardConfigError(f"config file not found: {path}")
-        return PricingConfig()
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GuardConfigError(f"cannot read config file {path}: {exc}") from exc
-    if not text.strip():
-        # A touched-but-empty file is a plausible accident; an empty config is
-        # still the honest reading of it, and every entry it lacks is unpriced.
-        return PricingConfig(sources=(path,))
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise GuardConfigError(f"{path} is not valid JSON: {exc}") from exc
-    return _parse_document(data, source=path, buildable=False)
 
 
 # --------------------------------------------------------------------------- #

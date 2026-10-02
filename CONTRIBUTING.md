@@ -11,7 +11,7 @@ No install is required to run the test suite or the examples.
 git clone https://github.com/yaoyuxiang-gnn/agent-guard
 cd agent-guard
 
-python -m unittest discover -s tests -t .   # 588 tests, no network, no fixtures
+python -m unittest discover -s tests -t .   # no network, no fixtures
 python examples/basic.py
 ```
 
@@ -107,6 +107,7 @@ In `src/agentguard/pricing.py`:
 3. Add the canonical name to `_DOTTED_PREFIXES` only if the provider uses dotted
    namespacing (Bedrock / Vertex style).
 4. Run `python -m unittest tests.test_pricing` and `python -m agentguard.cli pricing <model>`.
+   (`pricing` with a model name is the lookup; `config set` is what writes an entry.)
 
 Two rules for this table:
 

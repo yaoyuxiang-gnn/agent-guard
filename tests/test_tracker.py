@@ -96,6 +96,31 @@ class ExtractUsageTests(unittest.TestCase):
     def test_booleans_are_not_mistaken_for_counts(self) -> None:
         self.assertIsNone(extract_usage({"usage": {"prompt_tokens": True}}))
 
+    def test_bedrock_converse_shape(self) -> None:
+        # AWS spells usage camelCase where every other provider uses snake_case, and
+        # a Bedrock agent's only token counts arrive on this object. Without these
+        # keys a whole Bedrock run is billed as unpriced.
+        usage = extract_usage(NS(usage=NS(inputTokens=1_200, outputTokens=300, totalTokens=1_500)))
+        assert usage is not None
+        self.assertEqual((usage.input_tokens, usage.output_tokens), (1_200, 300))
+
+    def test_bedrock_converse_cache_fields(self) -> None:
+        usage = extract_usage(
+            NS(usage=NS(inputTokens=1_200, outputTokens=300, cacheReadInputTokens=900))
+        )
+        assert usage is not None
+        self.assertEqual(usage.cached_input_tokens, 900)
+
+    def test_bedrock_converse_as_a_dict(self) -> None:
+        usage = extract_usage({"usage": {"inputTokens": 40, "outputTokens": 2}})
+        assert usage is not None
+        self.assertEqual(usage.total_tokens, 42)
+
+    def test_camel_case_reasoning_tokens(self) -> None:
+        usage = extract_usage(NS(usage=NS(inputTokens=10, outputTokens=20, reasoningTokens=7)))
+        assert usage is not None
+        self.assertEqual(usage.reasoning_tokens, 7)
+
 
 class ExtractModelTests(unittest.TestCase):
     def test_reads_model_attribute(self) -> None:
@@ -180,6 +205,80 @@ class CostTrackerTests(unittest.TestCase):
         tracker = CostTracker(on_unknown_model="error")
         with self.assertRaises(GuardConfigError):
             tracker.record(model="mystery", usage=Usage(1, 1), elapsed_s=0.0)
+
+    def test_the_raising_mode_still_counts_the_call_it_refuses(self) -> None:
+        # Regression: the error used to be raised *instead of* the record, so the
+        # call vanished from the totals. The call was already made and already paid
+        # for; a report that denies it is a report that understates the bill.
+        tracker = CostTracker(on_unknown_model="error")
+        with self.assertRaises(GuardConfigError):
+            tracker.record(model="mystery", usage=Usage(1_000, 500), elapsed_s=0.0)
+        self.assertEqual(tracker.calls, 1)
+        self.assertEqual(tracker.unpriced_calls, 1)
+        self.assertEqual(tracker.unpriced_models, ("mystery",))
+        self.assertEqual(tracker.records[0].model, "mystery")
+        self.assertFalse(tracker.records[0].priced)
+
+    def test_record_with_policy_returns_the_failure_instead_of_raising(self) -> None:
+        tracker = CostTracker(on_unknown_model="error")
+        record, failure = tracker.record_with_policy(
+            model="mystery", usage=Usage(1_000, 500), elapsed_s=0.0
+        )
+        self.assertIsInstance(failure, GuardConfigError)
+        self.assertFalse(record.priced)
+        self.assertEqual(tracker.calls, 1)
+
+    def test_record_with_policy_reports_no_failure_when_priced(self) -> None:
+        tracker = CostTracker(on_unknown_model="error")
+        record, failure = tracker.record_with_policy(
+            model="gpt-4o", usage=Usage(1_000_000, 0), elapsed_s=0.0
+        )
+        self.assertIsNone(failure)
+        self.assertTrue(record.priced)
+
+    def test_record_with_policy_never_raises_in_warn_mode(self) -> None:
+        tracker = CostTracker(on_unknown_model="warn")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            record, failure = tracker.record_with_policy(
+                model="mystery", usage=Usage(1, 1), elapsed_s=0.0
+            )
+        self.assertIsNone(failure)
+        self.assertFalse(record.priced)
+        self.assertEqual(len(caught), 1)
+
+    def test_scope_totals_track_tools_and_tags(self) -> None:
+        tracker = CostTracker(on_unknown_model="ignore")
+        tracker.record(model="gpt-4o", usage=Usage(1_000_000, 0), elapsed_s=0.0, tool="search")
+        tracker.record(
+            model="gpt-4o", usage=Usage(1_000_000, 0), elapsed_s=0.0, tool="search", tag="index"
+        )
+        self.assertAlmostEqual(tracker.scope_totals("tool")["search"], 5.0)
+        self.assertAlmostEqual(tracker.scope_totals("tag")["index"], 2.5)
+
+    def test_scope_totals_omit_unpriced_calls(self) -> None:
+        # Adding 0.0 would create a bucket that reads as "this scope spent nothing"
+        # rather than "this scope cannot be measured".
+        tracker = CostTracker(on_unknown_model="ignore")
+        tracker.record(model="mystery", usage=Usage(1_000, 0), elapsed_s=0.0, tool="search")
+        self.assertEqual(tracker.scope_totals("tool"), {})
+
+    def test_scope_totals_ignore_untagged_calls(self) -> None:
+        tracker = CostTracker(on_unknown_model="ignore")
+        tracker.record(model="gpt-4o", usage=Usage(1_000_000, 0), elapsed_s=0.0)
+        self.assertEqual(tracker.scope_totals("tool"), {})
+        self.assertEqual(tracker.scope_totals("tag"), {})
+
+    def test_scope_totals_survive_a_state_round_trip(self) -> None:
+        tracker = CostTracker(on_unknown_model="ignore")
+        tracker.record(
+            model="gpt-4o", usage=Usage(1_000_000, 0), elapsed_s=0.0, tool="search", tag="index"
+        )
+        rebuilt = CostTracker.restore(
+            tracker.get_state(), tracker.price_table, on_unknown_model="ignore"
+        )
+        self.assertAlmostEqual(rebuilt.scope_totals("tool")["search"], 2.5)
+        self.assertAlmostEqual(rebuilt.scope_totals("tag")["index"], 2.5)
 
     def test_invalid_unknown_model_mode(self) -> None:
         with self.assertRaises(ValueError):

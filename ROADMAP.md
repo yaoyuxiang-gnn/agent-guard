@@ -60,29 +60,45 @@ Two questions this item left open, now answered:
 
 ---
 
-## Later (0.4+)
+## Shipped in 0.4
 
-### A price table that can be refreshed without a release
+### ~~A price table that can be refreshed without a release~~ — shipped
 
-`PRICING_AS_OF` goes stale between releases, and asking users to wait for a patch to
-learn a new model's price is a poor answer. The tension is the no-I/O rule: fetching
-prices at import time is exactly the kind of hidden network call this library
-refuses to make.
+`agentguard pricing --update` downloads a catalogue, checksums it, and caches it
+beside your config; `--from-file` imports one you already have, and `--status` and
+`--remove` manage the layer. The snapshot merges **underneath** your configuration, so
+a public catalogue can reprice a bundled model but can never override a rate you set
+yourself.
 
-Likely shape: an explicit, opt-in `agentguard pricing --update` that writes a local
-cache file, with the bundled table always the fallback. Never automatic.
+The tension the item named — the no-I/O rule — is resolved by making the network
+reachable from exactly one place: an explicit subcommand. Nothing fetches at import,
+on a timer, or in a background thread, and the checksum is re-verified on every read,
+so a corrupted or hand-edited snapshot is refused rather than billed.
 
-*Partly shipped.* The user-facing half — price a model agent-guard has never heard
-of, reprice one it has, alias a gateway name, disable a bundled price you do not
-trust — landed as the JSON config file (`agentguard config set ...`, see the
-README). A downloaded snapshot would be just another entry in the same merge chain,
-so the remaining work is the fetch itself: opt-in, checksummed, and written to the
-user config directory rather than imported over the network.
+Two things about the bundled table remain true, and the refresh does not change
+either: retired models keep their last published price, and a model absent from both
+the bundle and the snapshot is still *unpriced* rather than guessed.
 
-This is also the honest fix for the bundled table's real weakness. A refresh
-mechanism makes staleness a two-command problem; until it exists, a model newer than
-the snapshot is reported as *unpriced* and excluded from the budget, which is safe
-but not useful.
+### ~~Per-tool and per-tag cost attribution~~ — shipped
+
+`scoped_budgets={"tool:search": 1.0, "tag:index": 0.5}` caps a part of the run rather
+than the whole of it, tripping `BudgetScopeExceeded` with the tool or tag named.
+Attribution is O(1) per call, survives a checkpoint, and reaches worker threads
+through `guard.bind(...)` / `guard.context()` — no thread inherits a `contextvars`
+context, which is why those exist.
+
+### Smaller items in 0.4
+
+- **`preflight(strict=True)`** refuses a model it cannot price instead of returning
+  `0.0`. It defaults to on when `on_unknown_model="error"`.
+- **Bedrock's Converse usage shape** (`inputTokens` / `outputTokens` /
+  `cacheReadInputTokens`) is now understood, so a Bedrock run is priced rather than
+  reported as unpriced.
+- **Worker-thread attribution**: `guard.bind()` and `guard.context()`.
+
+---
+
+## Later (0.5+)
 
 ### Additional detectors, if they earn their place
 
@@ -110,6 +126,14 @@ guard. The work is not the wrapping; it is doing so without adding a dependency
 and without the adapter rotting when the framework changes its callback shape.
 Worth doing once a clear pattern emerges from real usage.
 
+### The price snapshot, extended
+
+- **A `--check` mode** that reports how far the snapshot has drifted from the
+  bundled table, so a refresh can be reviewed rather than trusted.
+- **Per-provider sources.** The default catalogue is a gateway's, not each
+  provider's own page; a user who wants OpenAI's rates only has no way to say so.
+- **`--url` presets** for catalogues known to work, rather than one default.
+
 ---
 
 ## Explicitly not planned
@@ -124,7 +148,8 @@ Recorded so that the answer is available before the issue is opened.
 - **Exact token counting.** It needs provider tokenizers, which are dependencies.
   Pre-flight estimates are documented as heuristic and will stay that way.
 - **Automatic price fetching.** See above; a hidden network call at import would be
-  a worse bug than a stale price.
+  a worse bug than a stale price. It is a subcommand you run, not something that
+  happens to you.
 - **Buying, trading, or gamifying stars.** Not a roadmap item, but worth stating on
   a page like this.
 

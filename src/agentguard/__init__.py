@@ -53,6 +53,7 @@ from .config import (
 from .decorators import guarded
 from .exceptions import (
     BudgetExceeded,
+    BudgetScopeExceeded,
     GuardConfigError,
     GuardError,
     GuardStopped,
@@ -96,6 +97,7 @@ __all__ = [
     "GuardStopped",
     "GuardConfigError",
     "BudgetExceeded",
+    "BudgetScopeExceeded",
     "TokenLimitExceeded",
     "StepLimitExceeded",
     "TimeLimitExceeded",
